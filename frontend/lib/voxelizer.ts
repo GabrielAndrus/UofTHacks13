@@ -183,7 +183,7 @@ function rayIntersectTriangle(
   
   const t = f * edge2.dot(q);
   if (t > EPSILON) {
-    return ray.at(t);
+    return ray.at(t, new THREE.Vector3());
   }
   
   return null;

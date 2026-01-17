@@ -7,18 +7,39 @@ import os
 import json
 import logging
 from typing import List, Dict, Optional
-from backboard import BackboardClient
 from dotenv import load_dotenv
-from app.services.master_builder import MasterBuilder, VoxelCluster
+from app.services.master_builder import MasterBuilder
 
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+# Optional Backboard import
+# Note: Backboard SDK may need to be installed from a custom source
+# The code will work without it, but BackboardService will not be available
+try:
+    from backboard import BackboardClient
+    BACKBOARD_AVAILABLE = True
+except ImportError:
+    BackboardClient = None
+    BACKBOARD_AVAILABLE = False
+    logger.debug("Backboard SDK not available. BackboardService will not be functional.")
+
 class BackboardService:
     def __init__(self):
         # Initializing the 'Single API' for 2200+ models
-        self.client = BackboardClient(api_key=os.getenv("BACKBOARD_API_KEY"))
+        if not BACKBOARD_AVAILABLE:
+            raise ImportError(
+                "Backboard SDK is not available. "
+                "Please install the Backboard SDK to use BackboardService. "
+                "The SDK may need to be installed from a custom source or private repository."
+            )
+        
+        backboard_key = os.getenv("BACKBOARD_API_KEY")
+        if not backboard_key:
+            raise ValueError("BACKBOARD_API_KEY environment variable is required")
+        
+        self.client = BackboardClient(api_key=backboard_key)
         self.assistant_id = None
         
         # Initialize the Master Builder (Source of Truth for 3D grid)

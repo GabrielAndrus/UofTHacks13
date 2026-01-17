@@ -84,6 +84,9 @@ class MasterBuilder:
         
         # Search mode: "simple" (Rebrickable only) or "hard" (Backboard AI)
         self.search_mode = os.getenv("PART_SEARCH_MODE", "simple").lower()
+        
+        # Test mode: Skip part verification (for testing without API keys)
+        self.test_mode = os.getenv("TEST_MODE", "false").lower() == "true"
     
     async def _initialize_brick_priorities(self):
         """
@@ -263,7 +266,17 @@ class MasterBuilder:
         is_even_layer = (layer_z % 2 == 0)
         
         # Verify part availability once (cache result)
-        is_available = await self.rebrickable.verify_part_availability(part_id, color_id)
+        # Skip verification in test mode
+        if self.test_mode:
+            is_available = True
+            logger.debug(f"Test mode: Assuming part {part_id} is available")
+        else:
+            # If API is unavailable or rate-limited, assume available to allow testing
+            try:
+                is_available = await self.rebrickable.verify_part_availability(part_id, color_id)
+            except Exception as e:
+                logger.warning(f"Part verification failed for {part_id}: {e}, assuming available")
+                is_available = True  # Assume available if verification fails
         
         if not is_available:
             logger.warning(

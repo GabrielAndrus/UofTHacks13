@@ -2,7 +2,14 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 from app.services.master_builder import MasterBuilder
-from app.services.backboard_service import BackboardService
+
+# Optional Backboard import
+try:
+    from app.services.backboard_service import BackboardService
+    BACKBOARD_AVAILABLE = True
+except ImportError:
+    BackboardService = None
+    BACKBOARD_AVAILABLE = False
 
 router = APIRouter()
 
@@ -114,10 +121,21 @@ async def get_interactive_instructions(thread_id: str) -> Dict:
     
     Each delta tells the frontend which Three.js objects to show/hide.
     """
+    if not BACKBOARD_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Backboard SDK is not available. Please install the Backboard SDK to use this endpoint."
+        )
+    
     try:
         service = BackboardService()
         timeline = service.get_instruction_timeline(thread_id)
         return timeline
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Backboard package not installed: {str(e)}"
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting instructions: {str(e)}")
 
@@ -130,9 +148,20 @@ async def get_scene_deltas(thread_id: str) -> List[Dict]:
     Returns the list of all scene changes (brick placements, model switches, etc.)
     in chronological order.
     """
+    if not BACKBOARD_AVAILABLE:
+        raise HTTPException(
+            status_code=503,
+            detail="Backboard SDK is not available. Please install the Backboard SDK to use this endpoint."
+        )
+    
     try:
         service = BackboardService()
         deltas = service.get_interactive_instructions(thread_id)
         return deltas
+    except ImportError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Backboard package not installed: {str(e)}"
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error getting deltas: {str(e)}")

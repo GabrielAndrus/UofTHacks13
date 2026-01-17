@@ -3,7 +3,7 @@ Pydantic schemas for TwelveLabs analysis and Master Builder data contracts.
 For Backboard integration contracts, see data_contracts.py
 """
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 
 
 class Dimensions(BaseModel):

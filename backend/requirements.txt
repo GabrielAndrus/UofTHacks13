@@ -5,3 +5,5 @@ python-dotenv
 httpx
 twelvelabs
 google-generativeai
+# backboard - Optional: Install separately if Backboard API is available
+# The Backboard SDK may need to be installed from a private repository or custom source

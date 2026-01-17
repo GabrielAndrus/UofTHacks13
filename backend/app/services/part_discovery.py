@@ -5,11 +5,19 @@ Uses Backboard API to intelligently search for LEGO parts based on shape charact
 import os
 import logging
 from typing import Dict, List, Optional, Tuple, Set
-from backboard import BackboardClient
 from dotenv import load_dotenv
 from app.services.rebrickable_api import get_rebrickable_client
 
 load_dotenv()
+
+# Optional Backboard import
+# Note: Backboard SDK may need to be installed from a custom source
+try:
+    from backboard import BackboardClient
+    BACKBOARD_AVAILABLE = True
+except ImportError:
+    BackboardClient = None
+    BACKBOARD_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -26,12 +34,14 @@ class PartDiscoveryService:
         """Initialize the Part Discovery Service."""
         self.backboard_client = None
         backboard_key = os.getenv("BACKBOARD_API_KEY")
-        if backboard_key:
+        if backboard_key and BACKBOARD_AVAILABLE:
             try:
                 self.backboard_client = BackboardClient(api_key=backboard_key)
                 logger.info("Backboard client initialized for intelligent part discovery")
             except Exception as e:
                 logger.warning(f"Could not initialize Backboard client: {e}")
+        elif backboard_key and not BACKBOARD_AVAILABLE:
+            logger.debug("Backboard API key set but backboard package not installed (optional)")
         
         self.rebrickable = get_rebrickable_client()
         
