@@ -118,19 +118,20 @@ async def process_video(file: UploadFile = File(...), num_frames: int = 6):
         description = None
         timestamps = None
         twelvelabs_success = False
+        twelvelabs_error = None
         
         try:
             upload = await api.upload_video(tmp_path)
             video_id = upload.get("video_id")
             task_id = upload.get("task_id")
             
-            # Wait for task completion (shorter timeout)
+            # Wait for task completion
             logger.info("Waiting for indexing...")
-            await api.wait_for_task(task_id, timeout=60)
+            await api.wait_for_task(task_id, timeout=120)
             
-            # Wait for video to be ready (shorter timeout)
+            # Wait for video to be ready
             logger.info("Waiting for video ready...")
-            await api.wait_for_video_ready(video_id, timeout=60)
+            await api.wait_for_video_ready(video_id, timeout=120)
             
             # Get scene description
             logger.info("Step 3: Getting scene description...")
@@ -142,7 +143,10 @@ async def process_video(file: UploadFile = File(...), num_frames: int = 6):
             twelvelabs_success = True
             
         except Exception as e:
-            logger.warning(f"TwelveLabs failed (will use Gemini only): {e}")
+            twelvelabs_error = str(e)
+            logger.warning(f"TwelveLabs failed (will use Gemini only): {twelvelabs_error}")
+            import traceback
+            logger.debug(f"TwelveLabs traceback: {traceback.format_exc()}")
             description = None  # Let Gemini analyze from images
             timestamps = None
         
@@ -174,7 +178,8 @@ async def process_video(file: UploadFile = File(...), num_frames: int = 6):
             "analysis": {
                 "twelvelabs_success": twelvelabs_success,
                 "description": description if description else "TwelveLabs analysis skipped - Gemini analyzing images directly",
-                "timestamps": timestamps if timestamps else {}
+                "timestamps": timestamps if timestamps else {},
+                "twelvelabs_error": twelvelabs_error if not twelvelabs_success else None
             },
             "threejs": {
                 "code": threejs_code

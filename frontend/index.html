@@ -423,6 +423,14 @@
                 });
             }
 
+            // Display TwelveLabs error if present
+            if (data.analysis?.twelvelabs_error) {
+                const errorDiv = document.createElement('div');
+                errorDiv.style.cssText = 'background: #ff6b6b; color: white; padding: 15px; border-radius: 8px; margin: 20px 0; font-family: monospace;';
+                errorDiv.innerHTML = `<strong>⚠️ TwelveLabs Error:</strong><br>${data.analysis.twelvelabs_error}`;
+                resultsSection.insertBefore(errorDiv, resultsSection.firstChild);
+            }
+
             // Display JSON (analysis data only, not the base64 images)
             const jsonData = {
                 video_id: data.video_id,

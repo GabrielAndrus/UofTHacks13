@@ -28,27 +28,13 @@ class GeminiService:
         
         genai.configure(api_key=api_key)
         
-        # Model priority: try Pro models first for quality, then flash for speed/quota
-        # Gemini 3 Pro / Gemini 1.5 Pro for best quality
+        # Model priority: use free tier Flash models first (better quotas)
+        # Since we're preloading ThreeJS anyway, Flash models are sufficient
         models_to_try = [
-            'gemini-1.5-pro',        # Gemini 1.5 Pro - best quality (most reliable)
-            'gemini-2.0-flash',      # Fast fallback with good quality
-            'gemini-1.5-flash',      # Final fallback
+            'gemini-2.0-flash',      # Free tier - best free model with video support
+            'gemini-1.5-flash',      # Free tier - reliable fallback with video support
+            'gemini-1.5-pro',        # Pro fallback if flash unavailable
         ]
-        
-        # Try to list available models for debugging
-        try:
-            available_models = [m.name.split('/')[-1] for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-            logger.info(f"Available Gemini models: {', '.join(available_models)}")
-            
-            # Check if gemini-3-pro-preview or similar exists
-            pro_models = [m for m in available_models if '3' in m and 'pro' in m.lower()]
-            if pro_models:
-                logger.info(f"Found Gemini 3 Pro models: {pro_models}")
-                # Add to front of list if found
-                models_to_try = pro_models + models_to_try
-        except Exception as e:
-            logger.warning(f"Could not list models: {e}")
         
         self.model = None
         for model_name in models_to_try:
