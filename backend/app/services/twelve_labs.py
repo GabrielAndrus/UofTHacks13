@@ -1,14 +1,19 @@
 """
 TwelveLabs Visual Intelligence Service
 Based on working pipeline implementation
+
+Implements a hybrid "Search-then-Analyze" workflow:
+- Search (Marengo): Find specific timestamps with confidence scores
+- Analyze (Pegasus): Generate detailed descriptions and structured JSON
 """
 
 import httpx
 import asyncio
 import os
 import re
+import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -148,7 +153,99 @@ class TwelveLabsAPI:
                 logger.error(f"Semantic check error: {e}")
                 raise
     
-    # ========== ANALYSIS ==========
+    # ========== SEARCH (Marengo) ==========
+    
+    async def search(self, query: str, max_retries: int = 5) -> List[Dict[str, Any]]:
+        """
+        Search for specific content in the video using Marengo.
+        Returns list of results with start/end timestamps and confidence scores.
+        
+        Args:
+            query: Search query (e.g., "floor", "ceiling", "desk")
+            max_retries: Number of retry attempts
+            
+        Returns:
+            List of search results with structure:
+            [{"start": float, "end": float, "confidence": float, "text": str}, ...]
+        """
+        url = f"{self.base_url}/search"
+        payload = {
+            "index_id": self.index_id,
+            "query": query,
+            "search_options": ["visual"],  # Use visual search (Marengo)
+            "page_limit": 10
+        }
+        
+        retry_delay = 2
+        
+        async with httpx.AsyncClient() as client:
+            for attempt in range(max_retries):
+                try:
+                    logger.info(f"Searching for '{query}' (attempt {attempt + 1}/{max_retries})...")
+                    
+                    response = await client.post(
+                        url,
+                        headers={**self.headers, "Content-Type": "application/json"},
+                        json=payload,
+                        timeout=60.0
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        results = []
+                        
+                        # Parse search results from the 'data' array
+                        for item in data.get("data", []):
+                            result = {
+                                "start": item.get("start", 0),
+                                "end": item.get("end", 0),
+                                "confidence": item.get("confidence", 0),
+                                "text": item.get("text", ""),
+                                "video_id": item.get("video_id", "")
+                            }
+                            results.append(result)
+                        
+                        logger.info(f"Search found {len(results)} results for '{query}'")
+                        return results
+                    
+                    elif response.status_code == 400:
+                        error = response.json()
+                        logger.warning(f"Search error: {error}")
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(retry_delay)
+                            retry_delay = min(retry_delay * 1.5, 15)
+                            continue
+                        return []
+                    
+                    elif response.status_code == 429:
+                        # Rate limited
+                        wait_time = retry_delay * 2
+                        logger.warning(f"Rate limited, waiting {wait_time}s...")
+                        await asyncio.sleep(wait_time)
+                        retry_delay = min(retry_delay * 1.5, 15)
+                        continue
+                    
+                    else:
+                        logger.warning(f"Search failed with status {response.status_code}: {response.text[:200]}")
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(retry_delay)
+                            continue
+                        return []
+                        
+                except httpx.RequestError as e:
+                    logger.warning(f"Network error during search: {e}")
+                    if attempt == max_retries - 1:
+                        return []
+                    await asyncio.sleep(retry_delay)
+                except Exception as e:
+                    logger.warning(f"Unexpected error during search: {e}")
+                    if attempt == max_retries - 1:
+                        return []
+                    await asyncio.sleep(retry_delay)
+        
+        return []
+    
+    # ========== ANALYSIS (Pegasus) ==========
     
     async def analyze(self, video_id: str, prompt: str, max_retries: int = 10) -> str:
         """Run analysis with retry logic for video_not_ready"""
@@ -194,6 +291,85 @@ class TwelveLabsAPI:
                     await asyncio.sleep(retry_delay)
         
         raise Exception(f"Analysis failed after {max_retries} attempts")
+    
+    async def get_3d_data_json(self, video_id: str) -> Dict[str, Any]:
+        """
+        Get structured JSON data for 3D reconstruction using Pegasus.
+        
+        Returns a parsed JSON object with room dimensions, surfaces, and objects.
+        """
+        prompt = """Analyze the visual data and output a valid JSON object describing the scene for 3D reconstruction. 
+
+You MUST output ONLY valid JSON with no additional text or explanation. Use this exact schema:
+
+{
+  "room_dims": "LxWxH",
+  "surfaces": [
+    {"name": "floor", "material": "string", "texture": "string"},
+    {"name": "wall", "material": "string", "texture": "string"}
+  ],
+  "objects": [
+    {"name": "string", "position": "string", "timestamp": "MM:SS"}
+  ]
+}
+
+Guidelines:
+- room_dims: Estimate room dimensions in meters (e.g., "4x3x2.5")
+- surfaces: List all visible surfaces (floor, walls, ceiling) with material and texture
+- objects: List all visible objects with their position (e.g., "center", "left wall", "corner") and the timestamp when they're best visible
+
+Output ONLY the JSON object, nothing else."""
+
+        try:
+            result = await self.analyze(video_id, prompt)
+            result = result.strip()
+            
+            # Try to extract JSON from the response
+            # Sometimes the model wraps JSON in markdown code blocks
+            if result.startswith("```"):
+                # Remove markdown code block
+                lines = result.split("\n")
+                json_lines = []
+                in_json = False
+                for line in lines:
+                    if line.startswith("```json") or line.startswith("```"):
+                        in_json = not in_json
+                        continue
+                    if in_json or (not line.startswith("```")):
+                        json_lines.append(line)
+                result = "\n".join(json_lines).strip()
+            
+            # Find JSON object boundaries
+            start_idx = result.find("{")
+            end_idx = result.rfind("}") + 1
+            
+            if start_idx != -1 and end_idx > start_idx:
+                json_str = result[start_idx:end_idx]
+                try:
+                    parsed = json.loads(json_str)
+                    logger.info(f"Successfully parsed 3D data JSON with {len(parsed.get('objects', []))} objects")
+                    return parsed
+                except json.JSONDecodeError as e:
+                    logger.warning(f"JSON parse error: {e}")
+                    logger.warning(f"Attempted to parse: {json_str[:500]}")
+            
+            # Return a default structure if parsing fails
+            logger.warning("Could not parse 3D data JSON, returning default structure")
+            return {
+                "room_dims": "unknown",
+                "surfaces": [],
+                "objects": [],
+                "raw_response": result[:1000]  # Include raw response for debugging
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get 3D data JSON: {e}")
+            return {
+                "room_dims": "unknown",
+                "surfaces": [],
+                "objects": [],
+                "error": str(e)
+            }
     
     async def get_object_description(self, video_id: str) -> str:
         """Get extremely detailed scene description for 3D reconstruction using Pegasus"""
@@ -289,50 +465,99 @@ Output format: Just list the part names, one per line."""
             }
     
     async def get_room_part_timestamp(self, video_id: str, part_name: str, part_description: str = None) -> Optional[str]:
-        """Get timestamp for a specific room part using Marengo"""
+        """
+        Get timestamp for a specific room part using Marengo Search.
+        
+        Uses the hybrid Search-then-Analyze workflow:
+        1. Search for the part using Marengo's visual search
+        2. Return the start time of the highest-confidence result
+        
+        Args:
+            video_id: The video ID (used for fallback analyze method)
+            part_name: Name of the room part (e.g., "floor", "ceiling")
+            part_description: Optional description for better search
+            
+        Returns:
+            Timestamp in MM:SS format or None if not found
+        """
         if part_description is None:
             part_description = part_name.replace('_', ' ')
         
-        # More specific prompt to get accurate timestamps for distinct room parts
-        prompt = f"""Find the exact moment in the video when '{part_description}' is most clearly visible and well-framed.
-This should be a distinct view that shows this specific part of the room from a good angle.
-Return ONLY the timestamp in MM:SS format (e.g., "00:15" or "1:30").
-If the part is not clearly visible, return "none"."""
+        # Use Marengo Search to find the room part
+        search_query = part_description
         
         try:
-            result = await self.analyze(video_id, prompt)
-            result = result.strip().lower()
+            # Search for the room part
+            results = await self.search(search_query)
             
-            # Handle "none" or empty responses
-            if not result or "none" in result or "not visible" in result or "not found" in result:
-                return None
+            if results:
+                # Sort by confidence (highest first)
+                sorted_results = sorted(results, key=lambda x: x.get("confidence", 0), reverse=True)
+                
+                # Get the highest confidence result
+                best_result = sorted_results[0]
+                start_time = best_result.get("start", 0)
+                confidence = best_result.get("confidence", 0)
+                
+                # Convert seconds to MM:SS format
+                minutes = int(start_time // 60)
+                seconds = int(start_time % 60)
+                timestamp = f"{minutes}:{seconds:02d}"
+                
+                logger.info(f"✓ {part_name}: {timestamp} (confidence: {confidence:.2f})")
+                return timestamp
             
-            # Extract timestamp - handle MM:SS format
-            match = re.search(r'(\d{1,2}):(\d{2})', result)
-            if match:
-                minutes = int(match.group(1))
-                seconds = int(match.group(2))
-                # Validate reasonable timestamp (less than 2 hours)
-                if minutes < 120 and seconds < 60:
-                    return match.group(0)
+            # Fallback: If search returns no results, try with alternative queries
+            alternative_queries = {
+                "floor": ["ground", "flooring", "carpet", "tile floor"],
+                "ceiling": ["roof", "overhead", "top of room"],
+                "left_side": ["left wall", "left area"],
+                "right_side": ["right wall", "right area"],
+                "back_wall": ["rear wall", "back of room"],
+                "front_area": ["front wall", "entrance area"],
+                "corner": ["room corner", "wall corner"],
+                "center": ["middle of room", "room center"]
+            }
             
-            # Try to parse as just seconds if no colon found
-            match_seconds = re.search(r'^(\d+\.?\d*)\s*(?:s|seconds?)?$', result)
-            if match_seconds:
-                total_sec = float(match_seconds.group(1))
-                mins = int(total_sec // 60)
-                secs = int(total_sec % 60)
-                if total_sec < 7200:  # Less than 2 hours
-                    return f"{mins}:{secs:02d}"
+            alt_queries = alternative_queries.get(part_name, [])
+            for alt_query in alt_queries:
+                results = await self.search(alt_query)
+                if results:
+                    sorted_results = sorted(results, key=lambda x: x.get("confidence", 0), reverse=True)
+                    best_result = sorted_results[0]
+                    start_time = best_result.get("start", 0)
+                    confidence = best_result.get("confidence", 0)
+                    
+                    minutes = int(start_time // 60)
+                    seconds = int(start_time % 60)
+                    timestamp = f"{minutes}:{seconds:02d}"
+                    
+                    logger.info(f"✓ {part_name} (via '{alt_query}'): {timestamp} (confidence: {confidence:.2f})")
+                    return timestamp
+                
+                await asyncio.sleep(0.3)  # Small delay between alternative searches
             
-            logger.warning(f"Could not parse timestamp for {part_name}: {result}")
+            logger.warning(f"✗ {part_name}: No results found via search")
             return None
+            
         except Exception as e:
             logger.warning(f"Failed to get timestamp for {part_name}: {e}")
             return None
     
-    async def get_all_room_timestamps(self, video_id: str, parts: Optional[list] = None) -> Dict[str, Optional[str]]:
-        """Get timestamps for specific parts of the room using Marengo"""
+    async def get_all_room_timestamps(self, video_id: str, parts: Optional[List[str]] = None) -> Dict[str, Optional[str]]:
+        """
+        Get timestamps for specific parts of the room using Marengo Search.
+        
+        Uses the hybrid Search-then-Analyze workflow to find timestamps
+        for each room part with confidence scores.
+        
+        Args:
+            video_id: The video ID
+            parts: Optional list of part names to search for
+            
+        Returns:
+            Dict mapping part names to timestamps (MM:SS format) or None
+        """
         # Default parts to extract if not specified
         if parts is None:
             parts = [
@@ -346,30 +571,39 @@ If the part is not clearly visible, return "none"."""
                 "center"
             ]
         
-        # Part descriptions for better Marengo understanding
+        # Part descriptions for better Marengo Search understanding
         part_descriptions = {
-            "right_side": "the right side of the room",
-            "left_side": "the left side of the room",
-            "floor": "the floor of the room",
-            "ceiling": "the ceiling of the room",
-            "back_wall": "the back wall of the room",
-            "front_area": "the front area of the room",
-            "corner": "a corner of the room",
-            "center": "the center of the room",
-            "wall_with_window": "a wall with a window",
-            "entrance": "the entrance or doorway",
-            "side_wall": "a side wall",
-            "window": "a window in the room"
+            "right_side": "right side of room",
+            "left_side": "left side of room",
+            "floor": "floor",
+            "ceiling": "ceiling",
+            "back_wall": "back wall",
+            "front_area": "front area",
+            "corner": "corner",
+            "center": "center of room",
+            "wall_with_window": "window wall",
+            "entrance": "doorway entrance",
+            "side_wall": "side wall",
+            "window": "window"
         }
+        
+        logger.info(f"Getting timestamps for {len(parts)} room parts using Search...")
         
         # Get timestamps for each requested part
         timestamps = {}
+        successful = 0
+        
         for part in parts:
             description = part_descriptions.get(part, part.replace('_', ' '))
-            logger.info(f"Getting timestamp for: {part} ({description})...")
+            logger.info(f"Searching for: {part} ({description})...")
             timestamps[part] = await self.get_room_part_timestamp(video_id, part, description)
-            await asyncio.sleep(0.5)  # Small delay between requests
+            
+            if timestamps[part]:
+                successful += 1
+            
+            await asyncio.sleep(0.5)  # Small delay between requests to avoid rate limiting
         
+        logger.info(f"Successfully found {successful}/{len(parts)} room part timestamps")
         return timestamps
     
     # Keep old methods for backwards compatibility
