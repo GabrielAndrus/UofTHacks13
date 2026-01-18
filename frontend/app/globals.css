@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom LEGO brick pattern for header */
+.lego-pattern {
+  background-image: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 14px,
+    rgba(0, 0, 0, 0.05) 14px, /* not quite sure what these colors represent, but will return */
+    rgba(0, 0, 0, 0.05) 16px
+  ),
+  repeating-linear-gradient(
+    90deg,
+    transparent,
+    transparent 14px,
+    rgba(0, 0, 0, 0.05) 14px,
+    rgba(0, 0, 0, 0.05) 16px
+  );
+  background-size: 16px 16px;
+}
+
+/* Loading spinner animation */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Pulse animation for loading states */
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Smooth transitions */
+* {
+  transition: all 0.2s ease;
+}

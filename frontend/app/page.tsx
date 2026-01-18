@@ -1,35 +1,26 @@
 'use client';
 
 import React from 'react';
-import dynamic from 'next/dynamic';
+import { motion } from 'framer-motion';
+import Header from './components/Header';
+import MainLayout from './components/MainLayout';
 
-// Dynamically import to avoid SSR issues with Three.js
-// Using ssr: false ensures it never renders on server
-const SequentialBuilderExample = dynamic(
-  () => import('./components/SequentialBuilderExample'),
-  { 
-    ssr: false,
-    loading: () => (
-      <div
-        key="loading"
-        style={{
-          width: '100%',
-          height: '100vh',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          background: '#1a1a1a',
-          color: 'white',
-          fontFamily: 'monospace',
-        }}
-      >
-        Loading LEGO Builder...
-      </div>
-    ),
-  }
-);
+/**
+ * Main Page Component
+ * 
+ * 🎓 Learning Points:
+ * 1. Component composition - combining Header + MainLayout
+ * 2. Layout structure with React fragments (<>) or div wrappers
+ * 3. This is the entry point for your app
+ */
 
 export default function Home() {
-  // Always return the same structure - dynamic import handles the rest
-  return <SequentialBuilderExample />;
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col">
+      <Header />
+      <main className="flex-1">
+        <MainLayout />
+      </main>
+    </div>
+  );
 }
