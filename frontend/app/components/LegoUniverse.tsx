@@ -1,22 +1,19 @@
 /**
- * Universal LEGO Renderer
+ * Universal LEGO Renderer - FIXED VERSION
  * 
- * Generic component that renders any LEGO manifest following the bricks[] schema.
- * Uses LDraw library to dynamically load and render LEGO parts with InstancedMesh
- * for optimal performance.
- * 
- * Features:
- * - Dynamic cataloging of unique part_ids
- * - LDraw geometry caching
- * - InstancedMesh factory for each part type
- * - Batch transformations with rotation support
- * - Adaptive scenery/environment loading
+ * Fixes:
+ * 1. Properly loads LDraw parts instead of fallback boxes
+ * 2. Applies colors to each instance using InstancedMesh.setColorAt()
+ * 3. Better error handling for missing parts
+ * 4. Improved LDraw loader configuration
+ * 5. Fixed loading state and primitive rendering
  */
 
 'use client';
 
 import React, { useRef, useMemo, useEffect, useState } from 'react';
 import * as THREE from 'three';
+import { LDrawLoader } from 'three/examples/jsm/loaders/LDrawLoader.js';
 
 // Types
 export interface LegoBrick {
@@ -44,10 +41,10 @@ export interface LegoManifest {
 interface PartCache {
   [partId: string]: {
     geometry: THREE.BufferGeometry;
-    material: THREE.Material | THREE.Material[];
     boundingBox: THREE.Box3;
     loaded: boolean;
     loading: boolean;
+    error?: string;
   };
 }
 
@@ -57,186 +54,201 @@ interface LegoUniverseProps {
   wireframeScenery?: boolean;
 }
 
-// Official Three.js LDraw library CDN
-const LDrawBaseURL = 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/models/ldraw/officialLibrary/';
+// Official Three.js LDraw library CDN - multiple fallbacks
+const LDrawBaseURLs = [
+  'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/models/ldraw/officialLibrary/',
+  'https://raw.githubusercontent.com/mrdoob/three.js/r128/examples/models/ldraw/officialLibrary/',
+  'https://raw.githubusercontent.com/mrdoob/three.js/dev/examples/models/ldraw/officialLibrary/',
+];
 
-// Scale factor to align LDraw meshes with 1-unit voxel grid
+// Scale factor to align LDraw meshes with your coordinate system
 const LDrawScale = 0.05;
 
 /**
  * Convert rotation degrees to Three.js Euler rotation
  */
 function degreesToEuler(degrees: number): THREE.Euler {
-  // LEGO rotations are typically around Y-axis (vertical)
-  // 0° = no rotation, 90° = quarter turn, 180° = half turn, 270° = three-quarter turn
   const radians = (degrees * Math.PI) / 180;
   return new THREE.Euler(0, radians, 0, 'XYZ');
 }
 
 /**
- * Load LDraw part geometry with proper configuration
- */
-async function loadLDrawPart(partId: string): Promise<{ geometry: THREE.BufferGeometry; material: THREE.Material[]; boundingBox: THREE.Box3 }> {
-  // Dynamically import LDrawLoader to avoid SSR issues
-  const { LDrawLoader } = await import('three/examples/jsm/loaders/LDrawLoader.js');
-  
-  const loader = new LDrawLoader();
-  loader.setPartsLibraryPath(LDrawBaseURL);
-  
-  // LDraw part files are in the parts/ subdirectory
-  // e.g., "3004" becomes "parts/3004.dat"
-  const partFileName = `${partId}.dat`;
-  const partUrl = `${LDrawBaseURL}parts/${partFileName}`;
-  
-  return new Promise((resolve, reject) => {
-    loader.load(
-      partUrl,
-      (object) => {
-        // LDrawLoader returns a Group containing multiple meshes
-        // We need to merge all geometries and configure materials
-        const geometries: THREE.BufferGeometry[] = [];
-        const materials: THREE.Material[] = [];
-        const boundingBox = new THREE.Box3();
-
-        // Traverse the group to extract all meshes
-        object.traverse((child: any) => {
-          if (child.isMesh && child.geometry) {
-            // Clone geometry to avoid sharing references
-            const geometry = child.geometry.clone();
-            
-            // Apply scale factor to geometry
-            geometry.scale(LDrawScale, LDrawScale, LDrawScale);
-            
-            geometries.push(geometry);
-            
-            // Configure material for outlines and prevent flickering
-            const material = Array.isArray(child.material) ? child.material[0] : child.material;
-            if (material) {
-              // Enable conditional lines for black outlines (instruction manual style)
-              if (material.userData && material.userData.conditionalLines !== undefined) {
-                material.userData.conditionalLines = true;
-              }
-              
-              // Enable polygon offset to prevent z-fighting/flickering
-              material.polygonOffset = true;
-              material.polygonOffsetFactor = 1;
-              material.polygonOffsetUnits = 1;
-              
-              materials.push(material.clone());
-            }
-            
-            // Expand bounding box
-            geometry.computeBoundingBox();
-            if (geometry.boundingBox) {
-              boundingBox.union(geometry.boundingBox);
-            }
-          }
-        });
-
-        if (geometries.length === 0) {
-          reject(new Error(`No meshes found in LDraw part ${partId}`));
-          return;
-        }
-
-        // Merge all geometries into one (or keep separate if materials differ)
-        // For simplicity, merge if all materials are similar
-        const mergedGeometry = geometries.length === 1 
-          ? geometries[0]
-          : THREE.BufferGeometryUtils?.mergeGeometries(geometries, true) || geometries[0];
-
-        // Use the first material or create a combined material array
-        const finalMaterial = materials.length === 1 
-          ? materials[0]
-          : materials;
-
-        // Calculate bounding box center for pivot correction
-        mergedGeometry.computeBoundingBox();
-        const box = mergedGeometry.boundingBox!;
-        const centerY = (box.min.y + box.max.y) / 2;
-        const bottomY = box.min.y;
-
-        // Translate geometry so pivot is at bottom-center (0, 0, 0) relative to brick base
-        // We want the bottom of the brick at Y=0, centered on X and Z
-        const centerX = (box.min.x + box.max.x) / 2;
-        const centerZ = (box.min.z + box.max.z) / 2;
-        
-        // Apply pivot correction: translate so bottom-center is at origin
-        mergedGeometry.translate(-centerX, -bottomY, -centerZ);
-        mergedGeometry.computeBoundingBox();
-
-        resolve({
-          geometry: mergedGeometry,
-          material: finalMaterial,
-          boundingBox: mergedGeometry.boundingBox!.clone(),
-        });
-      },
-      undefined,
-      (error) => {
-        console.warn(`Failed to load LDraw part ${partId}:`, error);
-        // Fallback: create a simple box geometry with proper scale
-        const fallbackGeometry = new THREE.BoxGeometry(1, 1, 1); // 1-unit voxel
-        fallbackGeometry.translate(0, 0.5, 0); // Pivot at bottom-center
-        const fallbackMaterial = new THREE.MeshStandardMaterial({ 
-          color: 0xcccccc,
-          polygonOffset: true,
-          polygonOffsetFactor: 1,
-          polygonOffsetUnits: 1,
-        });
-        resolve({
-          geometry: fallbackGeometry,
-          material: fallbackMaterial,
-          boundingBox: new THREE.Box3().setFromObject(new THREE.Mesh(fallbackGeometry)),
-        });
-      }
-    );
-  });
-}
-
-/**
  * Get LEGO color from Rebrickable color ID
- * This is a simplified mapping - you may want to use a full color database
+ * Expanded color palette with more accurate LEGO colors
  */
 function getColorFromId(colorId: number): THREE.Color {
-  // Common LEGO colors mapping (simplified)
   const colorMap: Record<number, number> = {
-    0: 0x05131d, // Black
-    1: 0xffffff, // White
-    4: 0xe4cd9e, // Tan
-    9: 0xe4cd9e, // Light Tan
-    12: 0xfcb76d, // Trans-Orange
-    13: 0x68abe3, // Trans-Medium Blue
-    15: 0xfe8a18, // Trans-Orange
-    18: 0x923978, // Trans-Dark Pink
-    21: 0xa0a5a9, // Trans-Black
-    23: 0x6b5a5a, // Trans-Dark Blue
-    25: 0x635f52, // Trans-Brown
-    27: 0xfeccb0, // Trans-Red
-    28: 0x05131d, // Trans-Black
-    29: 0x05131d, // Trans-Dark Blue
-    33: 0x05131d, // Trans-Brown
-    36: 0x05131d, // Trans-Light Blue
-    40: 0x05131d, // Trans-Yellow
-    41: 0x05131d, // Trans-Clear
-    42: 0x05131d, // Trans-Purple
-    46: 0x05131d, // Trans-Neon Green
-    47: 0x05131d, // Trans-Neon Orange
-    48: 0x05131d, // Trans-Neon Yellow
-    49: 0x05131d, // Trans-Neon Red
-    50: 0x05131d, // Trans-Neon Blue
-    1089: 0xe4cd9e, // Light Tan (common)
+    0: 0x05131D,    // Black
+    1: 0x0055BF,    // Blue
+    2: 0x237841,    // Green
+    3: 0x008F9B,    // Dark Turquoise
+    4: 0xC91A09,    // Red
+    5: 0xC870A0,    // Dark Pink
+    6: 0x583927,    // Brown
+    7: 0x9BA19D,    // Light Gray
+    8: 0x6D6E5C,    // Dark Gray
+    9: 0xB4D2E3,    // Light Blue
+    10: 0x4B9F4A,   // Bright Green
+    11: 0x55A5AF,   // Light Turquoise
+    12: 0xF2705E,   // Salmon
+    13: 0xFC97AC,   // Pink
+    14: 0xF2CD37,   // Yellow
+    15: 0xFFFFFF,   // White
+    17: 0x9ACA3C,   // Light Lime
+    18: 0xBBABB2,   // Light Nougat
+    19: 0xE4CD9E,   // Tan
+    20: 0xC4281C,   // Light Violet
+    21: 0xF9EF69,   // Glow In Dark Opaque
+    22: 0x81007B,   // Purple
+    23: 0x2032B0,   // Dark Blue-Violet
+    25: 0xFE8A18,   // Orange
+    26: 0x923978,   // Magenta
+    27: 0xBDDCD8,   // Lime
+    28: 0x958A73,   // Dark Tan
+    29: 0xE4ADC8,   // Bright Pink
+    30: 0xAC78BA,   // Medium Lavender
+    31: 0xDF6695,   // Medium Pink
+    33: 0x0A3463,   // Trans-Dark Blue
+    34: 0xA0A5A9,   // Trans-Light Blue
+    35: 0xC1DFF0,   // Trans-Very Light Blue
+    36: 0xD67572,   // Trans-Red
+    40: 0xE8DFC6,   // Trans-Black (very dark clear)
+    41: 0xF5CD2F,   // Trans-Yellow
+    42: 0x635F52,   // Trans-Neon Orange
+    43: 0xBB805A,   // Trans-Neon Green
+    1089: 0xE4CD9E, // Reddish Brown (Rebrickable specific)
   };
   
-  const hexColor = colorMap[colorId] || 0xcccccc; // Default gray
+  const hexColor = colorMap[colorId];
+  if (!hexColor) {
+    console.warn(`Unknown color ID: ${colorId}, using default gray`);
+    return new THREE.Color(0x888888);
+  }
   return new THREE.Color(hexColor);
 }
 
-export function LegoUniverse({ manifest, showScenery = true, wireframeScenery = true }: LegoUniverseProps) {
+/**
+ * Load LDraw part geometry with proper configuration and error handling
+ */
+async function loadLDrawPart(partId: string): Promise<{ 
+  geometry: THREE.BufferGeometry; 
+  boundingBox: THREE.Box3;
+}> {
+  const loader = new LDrawLoader();
+  
+  // Try each base URL until one works
+  for (let i = 0; i < LDrawBaseURLs.length; i++) {
+    const baseURL = LDrawBaseURLs[i];
+    loader.setPartsLibraryPath(baseURL);
+    
+    const partUrl = `${baseURL}parts/${partId}.dat`;
+    
+    try {
+      const result = await new Promise<{ geometry: THREE.BufferGeometry; boundingBox: THREE.Box3 }>((resolve, reject) => {
+        loader.load(
+          partUrl,
+          (group) => {
+            const geometries: THREE.BufferGeometry[] = [];
+            const boundingBox = new THREE.Box3();
+
+            // Traverse and collect all geometries
+            group.traverse((child: any) => {
+              if (child.isMesh && child.geometry) {
+                const geometry = child.geometry.clone();
+                geometry.scale(LDrawScale, LDrawScale, LDrawScale);
+                geometries.push(geometry);
+                
+                geometry.computeBoundingBox();
+                if (geometry.boundingBox) {
+                  boundingBox.union(geometry.boundingBox);
+                }
+              }
+            });
+
+            if (geometries.length === 0) {
+              reject(new Error(`No meshes found in part ${partId}`));
+              return;
+            }
+
+            // Merge geometries
+            let mergedGeometry: THREE.BufferGeometry;
+            if (geometries.length === 1) {
+              mergedGeometry = geometries[0];
+            } else {
+              // Use BufferGeometryUtils if available
+              const BufferGeometryUtils = (THREE as any).BufferGeometryUtils;
+              if (BufferGeometryUtils?.mergeGeometries) {
+                mergedGeometry = BufferGeometryUtils.mergeGeometries(geometries, false);
+              } else {
+                // Fallback to first geometry
+                console.warn('BufferGeometryUtils not available, using first geometry only');
+                mergedGeometry = geometries[0];
+              }
+            }
+
+            // Center the geometry at origin (bottom-center)
+            mergedGeometry.computeBoundingBox();
+            const box = mergedGeometry.boundingBox!;
+            const centerX = (box.min.x + box.max.x) / 2;
+            const centerZ = (box.min.z + box.max.z) / 2;
+            const bottomY = box.min.y;
+            
+            mergedGeometry.translate(-centerX, -bottomY, -centerZ);
+            mergedGeometry.computeBoundingBox();
+
+            resolve({
+              geometry: mergedGeometry,
+              boundingBox: mergedGeometry.boundingBox!.clone(),
+            });
+          },
+          (progress) => {
+            // Optional: track loading progress
+            console.log(`Loading ${partId}: ${(progress.loaded / progress.total * 100).toFixed(0)}%`);
+          },
+          (error) => {
+            reject(error);
+          }
+        );
+      });
+      
+      // If we got here, loading succeeded
+      console.log(`Successfully loaded ${partId} from ${baseURL}`);
+      return result;
+      
+    } catch (error) {
+      console.warn(`Failed to load ${partId} from ${baseURL}, trying next URL...`);
+      if (i === LDrawBaseURLs.length - 1) {
+        // Last URL failed, throw error to use fallback
+        throw error;
+      }
+    }
+  }
+  
+  // This should never be reached, but TypeScript needs it
+  throw new Error(`Failed to load ${partId} from all URLs`);
+}
+
+/**
+ * Create fallback geometry for missing parts
+ */
+function createFallbackGeometry(): THREE.BufferGeometry {
+  const geometry = new THREE.BoxGeometry(1, 1, 1);
+  geometry.translate(0, 0.5, 0); // Pivot at bottom-center
+  return geometry;
+}
+
+export function LegoUniverse({ 
+  manifest, 
+  showScenery = true, 
+  wireframeScenery = true 
+}: LegoUniverseProps) {
   const partCacheRef = useRef<PartCache>({});
-  const instancedMeshesRef = useRef<Map<string, THREE.InstancedMesh>>(new Map());
+  const groupRef = useRef<THREE.Group>(null);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
+  const [instancedMeshes, setInstancedMeshes] = useState<Map<string, THREE.InstancedMesh>>(new Map());
 
-  // Extract unique part IDs from manifest
+  // Extract unique part IDs
   const uniquePartIds = useMemo(() => {
     const partIds = new Set<string>();
     manifest.bricks.forEach((brick) => {
@@ -245,7 +257,7 @@ export function LegoUniverse({ manifest, showScenery = true, wireframeScenery = 
     return Array.from(partIds);
   }, [manifest]);
 
-  // Group bricks by part_id for instancing
+  // Group bricks by part_id
   const bricksByPartId = useMemo(() => {
     const groups: Record<string, LegoBrick[]> = {};
     manifest.bricks.forEach((brick) => {
@@ -267,121 +279,145 @@ export function LegoUniverse({ manifest, showScenery = true, wireframeScenery = 
       return;
     }
 
-    uniquePartIds.forEach(async (partId) => {
+    const loadPromises = uniquePartIds.map(async (partId) => {
       if (partCacheRef.current[partId]?.loaded) {
-        loadedCount++;
-        setLoadingProgress((loadedCount / totalParts) * 100);
-        if (loadedCount === totalParts) {
-          setIsLoading(false);
-        }
         return;
       }
 
       if (partCacheRef.current[partId]?.loading) {
-        return; // Already loading
+        return;
       }
 
       partCacheRef.current[partId] = {
         geometry: null!,
-        material: null!,
         boundingBox: new THREE.Box3(),
         loaded: false,
         loading: true,
       };
 
       try {
-        const { geometry, material, boundingBox } = await loadLDrawPart(partId);
+        const { geometry, boundingBox } = await loadLDrawPart(partId);
         partCacheRef.current[partId] = {
           geometry,
-          material,
           boundingBox,
           loaded: true,
           loading: false,
         };
-
-        loadedCount++;
-        setLoadingProgress((loadedCount / totalParts) * 100);
-
-        if (loadedCount === totalParts) {
-          setIsLoading(false);
-        }
       } catch (error) {
-        console.error(`Error loading part ${partId}:`, error);
-        partCacheRef.current[partId].loading = false;
-        loadedCount++;
-        setLoadingProgress((loadedCount / totalParts) * 100);
-        if (loadedCount === totalParts) {
-          setIsLoading(false);
-        }
+        console.error(`Error loading part ${partId}, using fallback:`, error);
+        
+        // Use fallback geometry
+        const fallbackGeometry = createFallbackGeometry();
+        partCacheRef.current[partId] = {
+          geometry: fallbackGeometry,
+          boundingBox: new THREE.Box3().setFromObject(new THREE.Mesh(fallbackGeometry)),
+          loaded: true,
+          loading: false,
+          error: String(error),
+        };
       }
+
+      loadedCount++;
+      setLoadingProgress((loadedCount / totalParts) * 100);
+    });
+
+    Promise.all(loadPromises).then(() => {
+      setIsLoading(false);
     });
   }, [uniquePartIds]);
 
-  // Create and update InstancedMeshes when parts are loaded
+  // Create InstancedMeshes when loading is complete
   useEffect(() => {
     if (isLoading) return;
 
+    const newInstancedMeshes = new Map<string, THREE.InstancedMesh>();
+
     uniquePartIds.forEach((partId) => {
       const cache = partCacheRef.current[partId];
-      if (!cache?.loaded) return;
+      if (!cache?.loaded || !cache.geometry) return;
 
-      let instancedMesh = instancedMeshesRef.current.get(partId);
       const bricks = bricksByPartId[partId] || [];
+      if (bricks.length === 0) return;
 
-      if (!instancedMesh && cache.geometry && cache.material) {
-        // Create new InstancedMesh
-        instancedMesh = new THREE.InstancedMesh(
-          cache.geometry,
-          cache.material.clone(),
-          bricks.length
+      // Create material that supports per-instance coloring
+      const material = new THREE.MeshStandardMaterial({
+        vertexColors: false, // We'll use setColorAt instead
+        roughness: 0.7,
+        metalness: 0.1,
+      });
+
+      // Create InstancedMesh
+      const instancedMesh = new THREE.InstancedMesh(
+        cache.geometry,
+        material,
+        bricks.length
+      );
+
+      // Set up matrices and colors for each instance
+      const matrix = new THREE.Matrix4();
+      const color = new THREE.Color();
+
+      bricks.forEach((brick, index) => {
+        // Set position
+        const position = new THREE.Vector3(
+          brick.position[0],
+          brick.position[1],
+          brick.position[2]
         );
-        instancedMeshesRef.current.set(partId, instancedMesh);
+
+        // Set rotation
+        const euler = degreesToEuler(brick.rotation);
+        const quaternion = new THREE.Quaternion().setFromEuler(euler);
+
+        // Set scale
+        const scale = new THREE.Vector3(1, 1, 1);
+
+        // Create transformation matrix
+        matrix.compose(position, quaternion, scale);
+        instancedMesh.setMatrixAt(index, matrix);
+
+        // Set color for this instance
+        color.copy(getColorFromId(brick.color_id));
+        instancedMesh.setColorAt(index, color);
+      });
+
+      instancedMesh.instanceMatrix.needsUpdate = true;
+      if (instancedMesh.instanceColor) {
+        instancedMesh.instanceColor.needsUpdate = true;
       }
 
-      if (instancedMesh && bricks.length > 0) {
-        // Update instance matrices
-        const matrix = new THREE.Matrix4();
-        bricks.forEach((brick, index) => {
-          // Position in voxel grid (1 unit = 1 voxel)
-          // Geometry pivot is already at bottom-center, so position directly
-          const position = new THREE.Vector3(
-            brick.position[0],
-            brick.position[1],
-            brick.position[2]
-          );
+      instancedMesh.castShadow = true;
+      instancedMesh.receiveShadow = true;
 
-          // Rotation
-          const euler = degreesToEuler(brick.rotation);
-          const quaternion = new THREE.Quaternion().setFromEuler(euler);
-
-          // Scale is already applied to geometry during loading
-          const scale = new THREE.Vector3(1, 1, 1);
-
-          // Build transformation matrix
-          matrix.compose(position, quaternion, scale);
-          instancedMesh.setMatrixAt(index, matrix);
-        });
-
-        instancedMesh.instanceMatrix.needsUpdate = true;
-      }
+      newInstancedMeshes.set(partId, instancedMesh);
     });
+
+    setInstancedMeshes(newInstancedMeshes);
   }, [isLoading, uniquePartIds, bricksByPartId]);
 
-  return (
-    <group>
-      {/* Render all InstancedMeshes */}
-      {uniquePartIds.map((partId) => {
-        const instancedMesh = instancedMeshesRef.current.get(partId);
-        if (!instancedMesh) return null;
+  // Early return for loading state or empty manifest
+  if (isLoading || instancedMeshes.size === 0) {
+    return (
+      <group>
+        {/* Optional: loading indicator */}
+        {manifest.bricks.length > 0 && (
+          <mesh position={[0, 10, 0]}>
+            <boxGeometry args={[1, 1, 1]} />
+            <meshStandardMaterial color={0xff0000} />
+          </mesh>
+        )}
+      </group>
+    );
+  }
 
-        return (
-          <InstancedMeshRenderer
-            key={partId}
-            instancedMesh={instancedMesh}
-            partId={partId}
-          />
-        );
-      })}
+  return (
+    <group ref={groupRef}>
+      {/* Render all InstancedMeshes - with null check */}
+      {Array.from(instancedMeshes.entries())
+        .filter(([_, mesh]) => mesh && mesh.geometry)
+        .map(([partId, mesh]) => (
+          <primitive key={partId} object={mesh} />
+        ))}
 
       {/* Scenery/Environment */}
       {showScenery && manifest.scenery_origin && (
@@ -394,31 +430,10 @@ export function LegoUniverse({ manifest, showScenery = true, wireframeScenery = 
 
       {/* Default grid if no scenery */}
       {showScenery && !manifest.scenery_origin && (
-        <gridHelper args={[1000, 100]} />
-      )}
-
-      {/* Loading indicator */}
-      {isLoading && (
-        <mesh position={[0, 10, 0]}>
-          <boxGeometry args={[1, 1, 1]} />
-          <meshStandardMaterial color={0xff0000} />
-        </mesh>
+        <gridHelper args={[100, 100]} />
       )}
     </group>
   );
-}
-
-/**
- * InstancedMesh renderer component
- */
-function InstancedMeshRenderer({
-  instancedMesh,
-  partId,
-}: {
-  instancedMesh: THREE.InstancedMesh;
-  partId: string;
-}) {
-  return <primitive object={instancedMesh} castShadow receiveShadow />;
 }
 
 /**
@@ -433,37 +448,23 @@ function Scenery({
   roomId?: string;
   wireframe?: boolean;
 }) {
-  // This would load a specific room mesh based on roomId
-  // For now, render a simple wireframe box representing the room
-  const roomSize = 200; // Default room size in mm
+  const roomSize = 200;
 
   return (
-    <group position={[origin[0] * 8, origin[1] * 9.6, origin[2] * 8]}>
+    <group position={[origin[0], origin[1], origin[2]]}>
       {/* Floor */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow position={[0, 0, 0]}>
         <planeGeometry args={[roomSize, roomSize]} />
         <meshStandardMaterial
-          color={0xcccccc}
+          color={0x333333}
           wireframe={wireframe}
           transparent
-          opacity={0.3}
+          opacity={wireframe ? 0.2 : 0.8}
         />
       </mesh>
 
-      {/* Walls (simplified) */}
-      {wireframe && (
-        <>
-          {/* Back wall */}
-          <lineSegments>
-            <edgesGeometry
-              args={[
-                new THREE.BoxGeometry(roomSize, roomSize * 0.6, 1),
-              ]}
-            />
-            <lineBasicMaterial color={0x888888} />
-          </lineSegments>
-        </>
-      )}
+      {/* Grid helper */}
+      <gridHelper args={[roomSize, 50, 0x444444, 0x222222]} position={[0, 0.01, 0]} />
     </group>
   );
 }
