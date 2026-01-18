@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import InstructionBook from './components/InstructionBook'
+import ModelSelector from './components/ModelSelector'
 import { 
   processManifestWithBackboard, 
   loadManifestFromFile,
@@ -9,6 +10,7 @@ import {
   type PieceCount,
   type LegoMemoryEntry 
 } from '../lib/legoManualGenerator'
+import type { ModelInterpretation } from '../lib/geminiLegoConverter'
 
 // Default empty data for when no build is loaded
 const emptyManualData: InstructionManual = {
@@ -52,6 +54,10 @@ export default function Home() {
   
   // Confirmation modal for removing environment
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false)
+  
+  // Model selector modal
+  const [showModelSelector, setShowModelSelector] = useState(false)
+  const [selectedModel, setSelectedModel] = useState<ModelInterpretation | null>(null)
 
   // Fullscreen toggle handler
   const toggleFullscreen = () => {
@@ -903,19 +909,34 @@ export default function Home() {
                 <div className="box-front-text">3d model of the<br/>environment +<br/>objects</div>
               </div>
             </div>
-            <button 
-              className="view-details-btn"
-              onClick={() => {
-                if (hasEnvironment) {
-                  setShowInstructionBook(true)
-                } else {
-                  setShowNothingModal(true)
-                }
-              }}
-            >
-              <i className="fa-solid fa-book"></i>
-              View Details
-            </button>
+            <div className="full-set-buttons">
+              <button 
+                className="view-details-btn"
+                onClick={() => {
+                  if (hasEnvironment) {
+                    setShowInstructionBook(true)
+                  } else {
+                    setShowNothingModal(true)
+                  }
+                }}
+              >
+                <i className="fa-solid fa-book"></i>
+                View Details
+              </button>
+              <button 
+                className="switch-model-btn"
+                onClick={() => {
+                  if (hasEnvironment) {
+                    setShowModelSelector(true)
+                  } else {
+                    setShowNothingModal(true)
+                  }
+                }}
+              >
+                <i className="fa-solid fa-shuffle"></i>
+                Switch Model
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -989,6 +1010,20 @@ export default function Home() {
           onClose={() => setShowInstructionBook(false)}
         />
       )}
+
+      {/* Model Selector Modal */}
+      <ModelSelector
+        isOpen={showModelSelector}
+        onClose={() => setShowModelSelector(false)}
+        pieceCount={pieceCount}
+        roomType="dorm_room"
+        totalBricks={pieceCount.total_pieces}
+        onSelectModel={(model) => {
+          setSelectedModel(model)
+          console.log('[ModelSelector] Selected model:', model.name)
+          // TODO: Apply model interpretation to the build
+        }}
+      />
     </>
   )
 }
