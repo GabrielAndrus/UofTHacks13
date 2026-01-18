@@ -103,15 +103,8 @@ async def process_video(file: UploadFile = File(...), num_frames: int = 6):
         os.write(tmp_fd, content)
         os.close(tmp_fd)
         
-        # Step 1: Extract frames with FFmpeg
-        logger.info("Step 1: Extracting frames...")
-        ffmpeg = get_ffmpeg_processor()
-        frames_result = ffmpeg.extract_frames(tmp_path, num_frames=num_frames)
-        frames = frames_result.get("images", [])
-        logger.info(f"Extracted {len(frames)} frames")
-        
-        # Step 2: Try TwelveLabs (optional - may fail if index doesn't support analyze)
-        logger.info("Step 2: Attempting TwelveLabs analysis...")
+        # Step 1: Try TwelveLabs first to get room part timestamps (optional - may fail)
+        logger.info("Step 1: Attempting TwelveLabs analysis...")
         api = get_twelve_labs_api()
         
         video_id = None
@@ -119,6 +112,8 @@ async def process_video(file: UploadFile = File(...), num_frames: int = 6):
         timestamps = None
         twelvelabs_success = False
         twelvelabs_error = None
+        room_timestamps_seconds = None
+        room_part_names = None
         
         try:
             upload = await api.upload_video(tmp_path)
@@ -134,21 +129,77 @@ async def process_video(file: UploadFile = File(...), num_frames: int = 6):
             await api.wait_for_video_ready(video_id, timeout=120)
             
             # Get scene description
-            logger.info("Step 3: Getting scene description...")
+            logger.info("Step 2: Getting scene description...")
             description = await api.get_object_description(video_id)
             
-            # Get view timestamps
-            logger.info("Step 4: Getting view timestamps...")
-            timestamps = await api.get_all_view_timestamps(video_id)
+            # Get room part timestamps (right side, left side, floor, etc.)
+            logger.info("Step 3: Getting room part timestamps using Marengo...")
+            timestamps = await api.get_all_room_timestamps(video_id)
+            
+            # Convert MM:SS timestamps to seconds and extract part names
+            import re
+            room_timestamps_seconds = []
+            room_part_names = []
+            timestamp_part_pairs = []
+            
+            for part_name, timestamp_str in timestamps.items():
+                if timestamp_str:
+                    # Convert MM:SS to seconds - handle various formats
+                    total_seconds = None
+                    
+                    # Try MM:SS format
+                    match = re.match(r'(\d{1,2}):(\d{2})', timestamp_str)
+                    if match:
+                        minutes, seconds = int(match.group(1)), int(match.group(2))
+                        total_seconds = minutes * 60 + seconds
+                    else:
+                        # Try just seconds format
+                        match_sec = re.match(r'^(\d+\.?\d*)\s*(?:s|seconds?)?$', timestamp_str.strip())
+                        if match_sec:
+                            total_seconds = int(float(match_sec.group(1)))
+                    
+                    if total_seconds is not None and total_seconds >= 0:
+                        timestamp_part_pairs.append((total_seconds, part_name))
+            
+            # Sort by timestamp to maintain order
+            timestamp_part_pairs.sort(key=lambda x: x[0])
+            
+            for total_seconds, part_name in timestamp_part_pairs:
+                room_timestamps_seconds.append(total_seconds)
+                room_part_names.append(part_name.replace('_', ' ').title())
+            
+            logger.info(f"Converted {len(room_timestamps_seconds)} timestamps: {room_timestamps_seconds}s with parts: {room_part_names}")
+            
             twelvelabs_success = True
             
         except Exception as e:
             twelvelabs_error = str(e)
-            logger.warning(f"TwelveLabs failed (will use Gemini only): {twelvelabs_error}")
+            logger.warning(f"TwelveLabs failed (will use default frames): {twelvelabs_error}")
             import traceback
             logger.debug(f"TwelveLabs traceback: {traceback.format_exc()}")
-            description = None  # Let Gemini analyze from images
+            description = None
             timestamps = None
+            room_timestamps_seconds = None
+            room_part_names = None
+        
+        # Step 4: Extract frames with FFmpeg - use TwelveLabs timestamps if available
+        logger.info("Step 4: Extracting frames...")
+        ffmpeg = get_ffmpeg_processor()
+        
+        if room_timestamps_seconds and room_part_names:
+            # Use TwelveLabs room part timestamps
+            logger.info(f"Using TwelveLabs timestamps: {room_timestamps_seconds} with parts: {room_part_names}")
+            frames_result = ffmpeg.extract_frames(
+                tmp_path, 
+                timestamps=room_timestamps_seconds,
+                angle_labels=room_part_names
+            )
+        else:
+            # Fallback to evenly spaced frames
+            frames_result = ffmpeg.extract_frames(tmp_path, num_frames=num_frames)
+        
+        frames = frames_result.get("images", [])
+        logger.info(f"Extracted {len(frames)} frames")
         
         # Step 5: Generate ThreeJS with Gemini (send video directly)
         logger.info("Step 5: Generating ThreeJS with Gemini from video...")

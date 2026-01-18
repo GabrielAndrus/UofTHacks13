@@ -6,6 +6,7 @@ Based on working pipeline implementation
 import httpx
 import asyncio
 import os
+import re
 import logging
 from typing import Dict, Any, Optional
 from pathlib import Path
@@ -195,8 +196,8 @@ class TwelveLabsAPI:
         raise Exception(f"Analysis failed after {max_retries} attempts")
     
     async def get_object_description(self, video_id: str) -> str:
-        """Get extremely detailed scene description for 3D reconstruction"""
-        prompt = """You are a helpful 3D environment designer analyzing a video. Please watch the video and describe the scene in detail to help recreate it in 3D.
+        """Get extremely detailed scene description for 3D reconstruction using Pegasus"""
+        prompt = """You are an expert 3D environment designer analyzing a video. Your task is to provide a comprehensive, detailed description of the scene to enable accurate 3D reconstruction.
 
 Please describe what you can observe in the following structure:
 
@@ -250,8 +251,130 @@ Be as detailed and specific as you can while staying accurate to what's actually
         
         return await self.analyze(video_id, prompt)
     
+    async def identify_room_parts(self, video_id: str) -> Dict[str, str]:
+        """Ask Marengo to identify and name the different sides/parts of the room visible in the video"""
+        prompt = """Analyze the video and identify the different sides, walls, and areas of the room that are visible. 
+For each distinct part (like a wall, corner, or area), describe it briefly.
+Output a simple list format like: "north wall", "east wall", "floor", "ceiling", "corner", etc.
+If the room doesn't have clear directional walls, use descriptive names like "wall_with_window", "back_wall", "side_area", etc.
+Only list parts that are clearly visible in the video. Keep it to 6-8 key parts maximum.
+Output format: Just list the part names, one per line."""
+        
+        try:
+            result = await self.analyze(video_id, prompt)
+            # Parse the response to extract room part names
+            parts = []
+            for line in result.strip().split('\n'):
+                line = line.strip()
+                # Remove numbering, bullets, dashes
+                line = re.sub(r'^[-\d\.\s]+', '', line)
+                line = line.strip()
+                if line and len(line) < 50:  # Reasonable part name length
+                    # Normalize: convert to lowercase and replace spaces with underscores
+                    normalized = line.lower().replace(' ', '_').replace('-', '_')
+                    parts.append(normalized)
+            
+            logger.info(f"Marengo identified room parts: {parts}")
+            return {part: part for part in parts[:8]}  # Limit to 8 parts
+        except Exception as e:
+            logger.warning(f"Failed to identify room parts: {e}")
+            # Fallback to standard parts
+            return {
+                "right_side": "right_side",
+                "left_side": "left_side", 
+                "floor": "floor",
+                "ceiling": "ceiling",
+                "back_wall": "back_wall",
+                "center": "center"
+            }
+    
+    async def get_room_part_timestamp(self, video_id: str, part_name: str, part_description: str = None) -> Optional[str]:
+        """Get timestamp for a specific room part using Marengo"""
+        if part_description is None:
+            part_description = part_name.replace('_', ' ')
+        
+        # More specific prompt to get accurate timestamps for distinct room parts
+        prompt = f"""Find the exact moment in the video when '{part_description}' is most clearly visible and well-framed.
+This should be a distinct view that shows this specific part of the room from a good angle.
+Return ONLY the timestamp in MM:SS format (e.g., "00:15" or "1:30").
+If the part is not clearly visible, return "none"."""
+        
+        try:
+            result = await self.analyze(video_id, prompt)
+            result = result.strip().lower()
+            
+            # Handle "none" or empty responses
+            if not result or "none" in result or "not visible" in result or "not found" in result:
+                return None
+            
+            # Extract timestamp - handle MM:SS format
+            match = re.search(r'(\d{1,2}):(\d{2})', result)
+            if match:
+                minutes = int(match.group(1))
+                seconds = int(match.group(2))
+                # Validate reasonable timestamp (less than 2 hours)
+                if minutes < 120 and seconds < 60:
+                    return match.group(0)
+            
+            # Try to parse as just seconds if no colon found
+            match_seconds = re.search(r'^(\d+\.?\d*)\s*(?:s|seconds?)?$', result)
+            if match_seconds:
+                total_sec = float(match_seconds.group(1))
+                mins = int(total_sec // 60)
+                secs = int(total_sec % 60)
+                if total_sec < 7200:  # Less than 2 hours
+                    return f"{mins}:{secs:02d}"
+            
+            logger.warning(f"Could not parse timestamp for {part_name}: {result}")
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to get timestamp for {part_name}: {e}")
+            return None
+    
+    async def get_all_room_timestamps(self, video_id: str, parts: Optional[list] = None) -> Dict[str, Optional[str]]:
+        """Get timestamps for specific parts of the room using Marengo"""
+        # Default parts to extract if not specified
+        if parts is None:
+            parts = [
+                "right_side",
+                "left_side", 
+                "floor",
+                "ceiling",
+                "back_wall",
+                "front_area",
+                "corner",
+                "center"
+            ]
+        
+        # Part descriptions for better Marengo understanding
+        part_descriptions = {
+            "right_side": "the right side of the room",
+            "left_side": "the left side of the room",
+            "floor": "the floor of the room",
+            "ceiling": "the ceiling of the room",
+            "back_wall": "the back wall of the room",
+            "front_area": "the front area of the room",
+            "corner": "a corner of the room",
+            "center": "the center of the room",
+            "wall_with_window": "a wall with a window",
+            "entrance": "the entrance or doorway",
+            "side_wall": "a side wall",
+            "window": "a window in the room"
+        }
+        
+        # Get timestamps for each requested part
+        timestamps = {}
+        for part in parts:
+            description = part_descriptions.get(part, part.replace('_', ' '))
+            logger.info(f"Getting timestamp for: {part} ({description})...")
+            timestamps[part] = await self.get_room_part_timestamp(video_id, part, description)
+            await asyncio.sleep(0.5)  # Small delay between requests
+        
+        return timestamps
+    
+    # Keep old methods for backwards compatibility
     async def get_view_timestamp(self, video_id: str, view: str) -> Optional[str]:
-        """Get timestamp for a specific view (front, side, back, top)"""
+        """Get timestamp for a specific view (front, side, back, top) - DEPRECATED: use get_room_part_timestamp"""
         prompts = {
             "front": "Return the exact timestamp when the front view of the main object is best visible. Output only the timestamp in format (MM:SS)",
             "side": "Return the exact timestamp when the side view of the main object is best visible. Output only the timestamp in format (MM:SS)",
@@ -268,7 +391,7 @@ Be as detailed and specific as you can while staying accurate to what's actually
             return None
     
     async def get_all_view_timestamps(self, video_id: str) -> Dict[str, Optional[str]]:
-        """Get timestamps for all views"""
+        """Get timestamps for all views - DEPRECATED: use get_all_room_timestamps"""
         views = ["front", "side", "back", "top"]
         timestamps = {}
         
