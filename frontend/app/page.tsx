@@ -1,10 +1,93 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import InstructionBook from './components/InstructionBook'
+
+// Demo data for instruction book (simulating loaded environment)
+const demoManualData = {
+  total_steps: 5,
+  difficulty: "Medium",
+  estimated_time_minutes: 25,
+  baseplate: {
+    size_studs: [32, 32],
+    lego_type: "Baseplate 32x32"
+  },
+  steps: [
+    {
+      step_number: 1,
+      layer_z: 0,
+      bricks_in_step: [
+        { part_id: "3001", position: { studs: [0, 0, 0] }, rotation: 0 },
+        { part_id: "3001", position: { studs: [4, 0, 0] }, rotation: 0 },
+        { part_id: "3003", position: { studs: [8, 0, 0] }, rotation: 0 },
+      ],
+      piece_counts: { "3001": 2, "3003": 1 } as Record<string, number>,
+      instructions: "Start by placing the foundation bricks"
+    },
+    {
+      step_number: 2,
+      layer_z: 1,
+      bricks_in_step: [
+        { part_id: "3001", position: { studs: [0, 0, 1] }, rotation: 0 },
+        { part_id: "3004", position: { studs: [4, 0, 1] }, rotation: 90 },
+      ],
+      piece_counts: { "3001": 1, "3004": 1 } as Record<string, number>,
+      instructions: "Build the walls"
+    },
+    {
+      step_number: 3,
+      layer_z: 2,
+      bricks_in_step: [
+        { part_id: "3003", position: { studs: [0, 0, 2] }, rotation: 0 },
+        { part_id: "3003", position: { studs: [2, 0, 2] }, rotation: 0 },
+      ],
+      piece_counts: { "3003": 2 } as Record<string, number>,
+      instructions: "Add support structure"
+    },
+    {
+      step_number: 4,
+      layer_z: 3,
+      bricks_in_step: [
+        { part_id: "3001", position: { studs: [0, 0, 3] }, rotation: 0 },
+      ],
+      piece_counts: { "3001": 1 } as Record<string, number>,
+      instructions: "Continue walls upward"
+    },
+    {
+      step_number: 5,
+      layer_z: 4,
+      bricks_in_step: [
+        { part_id: "3068", position: { studs: [0, 0, 4] }, rotation: 0 },
+      ],
+      piece_counts: { "3068": 1 } as Record<string, number>,
+      instructions: "Add the roof tiles"
+    }
+  ],
+  layer_summary: {
+    0: "Foundation layer",
+    1: "First floor walls",
+    2: "Support beams",
+    3: "Upper walls", 
+    4: "Roof"
+  }
+}
+
+const demoPieceCount = {
+  total_pieces: 47,
+  total_unique: 4,
+  breakdown: [
+    { part_id: "3001", color_id: 5, quantity: 18, piece_name: "Brick 2x4" },
+    { part_id: "3003", color_id: 1, quantity: 15, piece_name: "Brick 2x2" },
+    { part_id: "3004", color_id: 15, quantity: 8, piece_name: "Brick 1x2" },
+    { part_id: "3068", color_id: 7, quantity: 6, piece_name: "Tile 2x2" },
+  ]
+}
 
 export default function Home() {
   const brickContainerRef = useRef<HTMLDivElement>(null)
   const envContainerRef = useRef<HTMLDivElement>(null)
+  const [showInstructionBook, setShowInstructionBook] = useState(false)
+  const [hasEnvironment, setHasEnvironment] = useState(false) // Set to true when environment is loaded
   const [videoFile, setVideoFile] = useState<File | null>(null)
   const [videoPreview, setVideoPreview] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
@@ -584,6 +667,7 @@ export default function Home() {
     setVideoPreview(null)
     setUploadStatus('')
     setShowThreeJS(false)
+    setHasEnvironment(false) // Reset environment state
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -612,7 +696,7 @@ export default function Home() {
       <div className="hero-section">
         <div className="content-wrapper">
           <div className="text-section">
-            <h1>Rebuild<br/>your <em>identity,</em></h1>
+            <h1>Build<br/>your <em>identity,</em></h1>
             <p className="tagline">piece by piece.</p>
             <p>
               Transform your space into a buildable LEGO set. Upload your room, 
@@ -713,6 +797,13 @@ export default function Home() {
                   <i className="fa-solid fa-minus"></i>
                 </div>
               </div>
+              <button 
+                className="view-details-btn"
+                onClick={() => setShowInstructionBook(true)}
+              >
+                <i className="fa-solid fa-book"></i>
+                View Details
+              </button>
             </div>
           </div>
 
@@ -753,6 +844,27 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      {/* Instruction Book Modal */}
+      {showInstructionBook && (
+        <InstructionBook
+          projectName={hasEnvironment ? "My Room Build" : "No Environment"}
+          manual={hasEnvironment ? demoManualData : {
+            total_steps: 0,
+            difficulty: "N/A",
+            estimated_time_minutes: 0,
+            steps: [],
+            layer_summary: {}
+          }}
+          pieceCount={hasEnvironment ? demoPieceCount : {
+            total_pieces: 0,
+            total_unique: 0,
+            breakdown: []
+          }}
+          isOpen={showInstructionBook}
+          onClose={() => setShowInstructionBook(false)}
+        />
+      )}
     </>
   )
 }
