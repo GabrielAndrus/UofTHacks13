@@ -39,7 +39,7 @@ export default function ModelSelector({
   } | null>(null);
   const [conversionResult, setConversionResult] = useState<ConversionResult | null>(null);
 
-  const geminiApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || '';
+  const geminiApiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || process.env.GEMINI_API_KEY || '';
 
   useEffect(() => {
     if (isOpen && pieceCount.breakdown.length > 0 && interpretations.length === 0) {

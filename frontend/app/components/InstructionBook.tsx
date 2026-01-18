@@ -219,53 +219,54 @@ export default function InstructionBook({
       }
 
       return (
-        <div className="h-full flex flex-col p-8">
+        <div className="h-full flex flex-col p-8 bg-gradient-to-b from-gray-50 to-white">
           {/* LEGO Logo area */}
-          <div className="text-center mb-4">
+          <div className="text-center mb-6">
             <StudPattern count={6} color="#e3000b" />
           </div>
 
           {/* Title area */}
           <div className="flex-1 flex flex-col items-center justify-center text-center">
-            <div className="text-6xl mb-4">🏠</div>
-            <h1 className="text-4xl font-black text-gray-900 mb-2">{projectName}</h1>
+            <div className="text-5xl mb-6">🏠</div>
+            <h1 className="text-5xl font-black text-gray-900 mb-1 leading-tight">{projectName}</h1>
+            <div className="w-16 h-1 bg-red-600 mx-auto mb-6"></div>
             
             {/* Gemini-enhanced tagline */}
             {enhancedManual?.cover_tagline ? (
-              <p className="text-xl text-blue-600 font-semibold mb-4 italic">
+              <p className="text-lg text-blue-700 font-semibold mb-8 italic max-w-xs">
                 "{enhancedManual.cover_tagline}"
               </p>
             ) : (
-              <p className="text-xl text-gray-600 mb-4">Building Instructions</p>
+              <p className="text-lg text-gray-600 mb-8">Building Instructions</p>
             )}
 
             {/* Stats grid - LEGO style */}
-            <div className="grid grid-cols-2 gap-4 w-full max-w-sm mb-6">
-              <div className="bg-red-600 text-white rounded-lg p-3 shadow-lg text-center">
-                <p className="text-3xl font-black">{pieceCount.total_pieces}</p>
-                <p className="text-xs opacity-90">PIECES</p>
+            <div className="grid grid-cols-2 gap-3 w-full max-w-sm mb-8">
+              <div className="bg-gradient-to-br from-red-600 to-red-700 text-white rounded-xl p-4 shadow-lg text-center hover:shadow-xl transition-shadow">
+                <p className="text-3xl font-black leading-none">{pieceCount.total_pieces}</p>
+                <p className="text-xs font-bold opacity-90 mt-1">PIECES</p>
               </div>
-              <div className="bg-blue-600 text-white rounded-lg p-3 shadow-lg text-center">
-                <p className="text-3xl font-black">{pieceCount.total_unique}</p>
-                <p className="text-xs opacity-90">TYPES</p>
+              <div className="bg-gradient-to-br from-blue-600 to-blue-700 text-white rounded-xl p-4 shadow-lg text-center hover:shadow-xl transition-shadow">
+                <p className="text-3xl font-black leading-none">{pieceCount.total_unique}</p>
+                <p className="text-xs font-bold opacity-90 mt-1">TYPES</p>
               </div>
-              <div className="bg-green-600 text-white rounded-lg p-3 shadow-lg text-center">
-                <p className="text-3xl font-black">{manual.total_steps}</p>
-                <p className="text-xs opacity-90">STEPS</p>
+              <div className="bg-gradient-to-br from-green-600 to-green-700 text-white rounded-xl p-4 shadow-lg text-center hover:shadow-xl transition-shadow">
+                <p className="text-3xl font-black leading-none">{manual.total_steps}</p>
+                <p className="text-xs font-bold opacity-90 mt-1">STEPS</p>
               </div>
-              <div className="bg-orange-500 text-white rounded-lg p-3 shadow-lg text-center">
-                <p className="text-3xl font-black">{manual.estimated_time_minutes}m</p>
-                <p className="text-xs opacity-90">TIME</p>
+              <div className="bg-gradient-to-br from-orange-500 to-orange-600 text-white rounded-xl p-4 shadow-lg text-center hover:shadow-xl transition-shadow">
+                <p className="text-3xl font-black leading-none">{manual.estimated_time_minutes}m</p>
+                <p className="text-xs font-bold opacity-90 mt-1">TIME</p>
               </div>
             </div>
 
             {/* Difficulty */}
-            <div className="flex gap-3 flex-wrap justify-center mb-4">
-              <span className="px-4 py-2 bg-gray-900 text-white rounded-full text-sm font-bold">
+            <div className="flex gap-3 flex-wrap justify-center mb-8">
+              <span className="px-5 py-2 bg-gray-900 text-white rounded-full text-sm font-bold shadow-md">
                 {manual.difficulty}
               </span>
               {enhancedManual?.difficulty_description && (
-                <span className="px-4 py-2 bg-yellow-400 text-gray-900 rounded-full text-sm font-bold">
+                <span className="px-5 py-2 bg-yellow-400 text-gray-900 rounded-full text-sm font-bold shadow-md">
                   {enhancedManual.difficulty_description}
                 </span>
               )}
@@ -273,15 +274,15 @@ export default function InstructionBook({
 
             {/* Gemini toggle */}
             {geminiApiKey && (
-              <div className="w-full max-w-sm bg-gray-100 rounded-lg p-3 mt-2">
+              <div className="w-full max-w-sm bg-blue-50 border-2 border-blue-200 rounded-xl p-4">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-semibold text-gray-700">✨ AI Enhancement</span>
+                  <span className="text-sm font-bold text-blue-900">✨ AI Enhancement</span>
                   <button
                     onClick={() => setUseGemini(!useGemini)}
                     disabled={isEnhancing}
-                    className={`px-3 py-1 rounded-full text-xs font-bold transition-colors ${
+                    className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${
                       useGemini 
-                        ? 'bg-green-500 text-white' 
+                        ? 'bg-green-500 text-white shadow-md' 
                         : 'bg-gray-300 text-gray-600'
                     }`}
                   >
@@ -289,18 +290,18 @@ export default function InstructionBook({
                   </button>
                 </div>
                 {isEnhancing && (
-                  <p className="text-xs text-blue-600 mt-2">⏳ Enhancing with Gemini AI...</p>
+                  <p className="text-xs text-blue-700 mt-2 font-semibold">⏳ Enhancing with Gemini AI...</p>
                 )}
                 {enhancedManual && (
-                  <p className="text-xs text-green-600 mt-2">✓ AI-enhanced instructions ready!</p>
+                  <p className="text-xs text-green-700 mt-2 font-semibold">✓ AI-enhanced instructions ready!</p>
                 )}
               </div>
             )}
           </div>
 
           {/* Bottom */}
-          <div className="text-center mt-4">
-            <p className="text-sm text-gray-500 mb-2">→ to browse • 📥 to download PDF</p>
+          <div className="text-center mt-6">
+            <p className="text-xs text-gray-500 mb-3 font-semibold">→ to browse • 📥 to download PDF</p>
             <StudPattern count={6} color="#1e40af" />
           </div>
         </div>
@@ -324,38 +325,72 @@ export default function InstructionBook({
 
           {/* Building tips from Gemini */}
           {enhancedManual?.building_tips && enhancedManual.building_tips.length > 0 && (
-            <div className="bg-yellow-50 border-2 border-yellow-300 rounded-lg p-3 mb-4">
-              <p className="text-sm font-bold text-yellow-800 mb-1">💡 Building Tips:</p>
-              <ul className="text-xs text-yellow-700 list-disc list-inside">
+            <div className="bg-gradient-to-r from-amber-50 to-yellow-50 border-l-4 border-yellow-500 rounded-r-lg p-4 mb-4">
+              <p className="text-xs font-black text-yellow-900 mb-2 tracking-wide">💡 PRO TIPS</p>
+              <ul className="text-xs text-yellow-800 space-y-1.5">
                 {enhancedManual.building_tips.slice(0, 3).map((tip, i) => (
-                  <li key={i}>{tip}</li>
+                  <li key={i} className="flex items-start gap-2">
+                    <span className="font-black mt-0.5">→</span>
+                    <span className="font-medium">{tip}</span>
+                  </li>
                 ))}
               </ul>
             </div>
           )}
 
           {/* Parts grid - LEGO manual style */}
-          <div className="flex-1 overflow-y-auto">
-            <div className="grid grid-cols-2 gap-2">
-              {pieceCount.breakdown.slice(0, 16).map((part, idx) => (
-                <BrickCallout
-                  key={idx}
-                  partName={part.piece_name}
-                  quantity={part.quantity}
-                  color={BRICK_COLORS[idx % BRICK_COLORS.length]}
-                />
-              ))}
+          <div className="flex-1 overflow-y-auto pr-2">
+            <div className="space-y-2.5">
+              {pieceCount.breakdown.slice(0, 16).map((part, idx) => {
+                // Map LEGO color IDs to actual colors
+                const colorMap: Record<number, string> = {
+                  0: '#1B1B1B',  // Black
+                  1: '#0055BF',  // Blue
+                  2: '#237841',  // Green
+                  4: '#C91A09',  // Red
+                  5: '#C870A0',  // Dark Pink
+                  6: '#583927',  // Brown
+                  7: '#9BA19D',  // Light Gray
+                  8: '#6D6E5C',  // Dark Gray
+                  9: '#4FA3D1',  // Light Blue
+                  14: '#F2CD37', // Yellow
+                  15: '#FFFFFF', // White
+                  19: '#E4CD9E', // Tan
+                  25: '#FE8A18', // Orange
+                  28: '#958A73', // Dark Tan
+                };
+                
+                const pieceColor = part.color_id !== undefined 
+                  ? (colorMap[part.color_id] || BRICK_COLORS[idx % BRICK_COLORS.length])
+                  : BRICK_COLORS[idx % BRICK_COLORS.length];
+                
+                return (
+                  <div key={idx} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md hover:border-gray-300 transition-all duration-200">
+                    <div 
+                      className="w-10 h-8 rounded-lg flex-shrink-0"
+                      style={{ backgroundColor: pieceColor, border: '1px solid rgba(0,0,0,0.15)' }}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-bold text-gray-900 truncate">{part.piece_name}</p>
+                      {part.color_name && <p className="text-xs text-gray-500 truncate">{part.color_name}</p>}
+                    </div>
+                    <div className="bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded-full text-xs font-black transition-colors flex-shrink-0 shadow-sm">
+                      {part.quantity}×
+                    </div>
+                  </div>
+                );
+              })}
             </div>
             {pieceCount.breakdown.length > 16 && (
-              <p className="text-center text-gray-500 mt-3 text-sm">
-                +{pieceCount.breakdown.length - 16} more types...
+              <p className="text-center text-gray-400 mt-4 text-xs font-semibold">
+                +{pieceCount.breakdown.length - 16} more types
               </p>
             )}
           </div>
 
           {/* Total */}
-          <div className="mt-3 pt-3 border-t-2 border-gray-200 flex justify-center">
-            <div className="bg-black text-white px-6 py-2 rounded-full font-bold">
+          <div className="mt-4 pt-4 border-t-2 border-gray-200 flex justify-center">
+            <div className="bg-gradient-to-r from-red-600 to-red-700 text-white px-8 py-2.5 rounded-full font-black text-sm shadow-lg hover:shadow-xl transition-shadow">
               Total: {pieceCount.total_pieces} pieces
             </div>
           </div>

@@ -247,9 +247,14 @@ export async function generateModelInterpretations(
   totalBricks: number,
   apiKey: string
 ): Promise<ConversionResult> {
+  if (!apiKey || apiKey.trim() === '') {
+    console.error('[GeminiLegoConverter] Error: API key is missing. Please set GEMINI_API_KEY in .env');
+    return getDefaultInterpretations(pieceList, totalBricks);
+  }
+
   const { GoogleGenerativeAI } = await import('@google/generative-ai');
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
+  const model = genAI.getGenerativeModel({ model: 'gemini-3.0-pro' });
 
   const prompt = buildLegoConversionPrompt(pieceList, roomType, totalBricks);
 
@@ -418,6 +423,115 @@ export function suggestPiecesForShape(shapeDescription: string): {
     ],
     technique: 'Use combination of bricks, plates, and tiles for varied heights and textures',
   };
+}
+
+/**
+ * Simple LEGO conversion - takes piece count and returns LEGO build suggestions
+ * Now with support for specific model analysis from Three.js generated objects
+ */
+export async function convertToLegoDesign(
+  totalPieces: number,
+  pieceBreakdown: Array<{ part_id: string; quantity: number; piece_name: string; color_id?: number; color_name?: string }>,
+  modelDescription: string,
+  apiKey: string,
+  modelAnalysis?: {
+    modelName: string;
+    modelType: string;
+    description: string;
+    extractedPieces: Array<{
+      part_id: string;
+      name: string;
+      quantity: number;
+      color_id?: number;
+      color_name?: string;
+      reasoning: string;
+    }>;
+  }
+): Promise<string> {
+  if (!apiKey || apiKey.trim() === '') {
+    console.error('[GeminiLegoConverter] Error: API key is missing. Please set GEMINI_API_KEY in .env');
+    return 'Unable to generate LEGO design without API key';
+  }
+
+  const { GoogleGenerativeAI } = await import('@google/generative-ai');
+  const genAI = new GoogleGenerativeAI(apiKey);
+  const model = genAI.getGenerativeModel({ model: 'gemini-3.0-pro' });
+
+  // Use model analysis pieces if available, otherwise use environment pieces
+  const piecesToUse = modelAnalysis?.extractedPieces || pieceBreakdown;
+  
+  const currentPieces = piecesToUse
+    .slice(0, 20)
+    .map(p => {
+      const colorInfo = (p as any).color_name ? ` (${(p as any).color_name})` : '';
+      const reasoning = (p as any).reasoning ? ` - ${(p as any).reasoning}` : '';
+      return `- ${p.quantity}× ${p.name}${colorInfo}${reasoning}`;
+    })
+    .join('\n');
+
+  // Build specific prompt based on whether we have model analysis
+  let prompt = '';
+  if (modelAnalysis) {
+    prompt = `You are a LEGO Master Builder expert. You are building a detailed instruction manual for a specific LEGO model.
+
+## Specific Model Details
+- **Model Name**: ${modelAnalysis.modelName}
+- **Model Type**: ${modelAnalysis.modelType}
+- **Description**: ${modelAnalysis.description}
+
+## Pieces Specifically Extracted from the 3D Design
+${currentPieces}
+
+## Your Task
+Create detailed, step-by-step LEGO building instructions that:
+1. Use EXACTLY the pieces and colors identified from the 3D model
+2. Show how to build this ${modelAnalysis.modelName} authentically
+3. Explain placement and orientation of each piece type
+4. Describe color placement for visual accuracy
+5. Include construction techniques specific to this design
+
+Focus on the specific pieces that make this model unique. Be detailed about assembly sequences.`;
+  } else {
+    prompt = `You are a LEGO Master Builder. Convert the following 3D model into a LEGO brick design.
+
+## Model Information
+- Description: ${modelDescription}
+- Total Pieces Needed: ${totalPieces}
+- Current Pieces Breakdown (by piece type and color):
+${currentPieces}
+
+## Task
+Provide a creative LEGO interpretation of this model that:
+1. Uses realistic LEGO building techniques
+2. Incorporates the actual pieces and colors listed above
+3. Suggests how to position each piece type for authentic appearance
+4. Describes key structural and color composition techniques
+
+Be specific about which color pieces go where for the best visual result.
+Keep the response concise and practical. Focus on how to build this in LEGO form using these exact pieces and colors.`;
+  }
+
+  try {
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    console.log('[GeminiLegoConverter] Successfully generated LEGO design');
+    return text;
+  } catch (error: any) {
+    console.error('[GeminiLegoConverter] Full error:', error);
+    const errorMessage = error?.message || String(error);
+    
+    // Check for quota/rate limit errors
+    if (errorMessage.includes('429') || errorMessage.includes('quota') || errorMessage.includes('Quota')) {
+      return `API quota exceeded. Please wait a few minutes before trying again. Rate limits apply to the free tier of the Gemini API.`;
+    }
+    
+    // Check for other API errors
+    if (errorMessage.includes('403') || errorMessage.includes('permission')) {
+      return `API authentication error. Please verify your API key is valid.`;
+    }
+    
+    return `Failed to generate LEGO design: ${errorMessage}`;
+  }
 }
 
 /**

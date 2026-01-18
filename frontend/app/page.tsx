@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import InstructionBook from './components/InstructionBook'
-import ModelSelector from './components/ModelSelector'
+import { ModelDetailsDisplay } from './components/ModelDetailsDisplay'
 import { 
   processManifestWithBackboard, 
   loadManifestFromFile,
@@ -10,7 +10,8 @@ import {
   type PieceCount,
   type LegoMemoryEntry 
 } from '../lib/legoManualGenerator'
-import type { ModelInterpretation } from '../lib/geminiLegoConverter'
+import { convertToLegoDesign } from '../lib/geminiLegoConverter'
+import { convertVideoTo3DObject, executeAndAddObject } from '../lib/videoToThreeJS'
 
 // Default empty data for when no build is loaded
 const emptyManualData: InstructionManual = {
@@ -55,9 +56,41 @@ export default function Home() {
   // Confirmation modal for removing environment
   const [showRemoveConfirm, setShowRemoveConfirm] = useState(false)
   
-  // Model selector modal
-  const [showModelSelector, setShowModelSelector] = useState(false)
-  const [selectedModel, setSelectedModel] = useState<ModelInterpretation | null>(null)
+  // LEGO design toggle
+  const [showLegoDesign, setShowLegoDesign] = useState(false)
+  const [legoDesignText, setLegoDesignText] = useState<string>('')
+  const [legoGenerating, setLegoGenerating] = useState(false)
+  const generatedRef = useRef(false)
+  
+  // Objects state
+  const [objects, setObjects] = useState<Array<{ id: string; name: string; mesh: any; modelAnalysis?: any }>>([])
+  const [objectFileInputRef, setObjectFileInputRef] = useState<HTMLInputElement | null>(null)
+  const [addingObject, setAddingObject] = useState(false)
+  const [selectedModelAnalysis, setSelectedModelAnalysis] = useState<any>(null)
+  const [showModelDetails, setShowModelDetails] = useState(false)
+
+  // Auto-generate LEGO design when environment is loaded
+  useEffect(() => {
+    const generateLegoDesign = async () => {
+      if (generatedRef.current) return // Prevent multiple calls
+      if (hasEnvironment && pieceCount.total_pieces > 0 && !legoDesignText) {
+        generatedRef.current = true
+        setLegoGenerating(true)
+        const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || ''
+        const design = await convertToLegoDesign(
+          pieceCount.total_pieces,
+          pieceCount.breakdown,
+          projectName,
+          apiKey,
+          undefined // No specific model analysis for environment
+        )
+        setLegoDesignText(design)
+        setShowLegoDesign(true)
+        setLegoGenerating(false)
+      }
+    }
+    generateLegoDesign()
+  }, [hasEnvironment])
 
   // Fullscreen toggle handler
   const toggleFullscreen = () => {
@@ -97,183 +130,6 @@ export default function Home() {
     }
   }, [])
 
-  useEffect(() => {
-    // Dynamically import Three.js only on client side
-    const initThreeJS = async () => {
-      if (!brickContainerRef.current) return
-      
-      const THREE = await import('three')
-      const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js')
-
-      const container = brickContainerRef.current
-      const width = container.clientWidth
-      const height = container.clientHeight
-
-      // Scene setup
-      const scene = new THREE.Scene()
-      scene.background = new THREE.Color(0xe4e4e4)
-
-      const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000)
-      camera.position.set(4, 3, 5)
-
-      const renderer = new THREE.WebGLRenderer({ antialias: true })
-      renderer.setSize(width, height)
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
-      renderer.shadowMap.enabled = true
-      renderer.domElement.style.display = 'block'
-      renderer.domElement.style.width = '100%'
-      renderer.domElement.style.height = '100%'
-      container.appendChild(renderer.domElement)
-
-      // Controls
-      const controls = new OrbitControls(camera, renderer.domElement)
-      controls.enableDamping = true
-      controls.autoRotate = true
-      controls.autoRotateSpeed = 2
-      controls.target.set(0, 1, 0)
-
-      // Lighting
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6)
-      scene.add(ambientLight)
-
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8)
-      directionalLight.position.set(5, 10, 5)
-      directionalLight.castShadow = true
-      scene.add(directionalLight)
-
-      // Create text texture for brick faces
-      const createTextTexture = (text: string, bgColor: string) => {
-        const canvas = document.createElement('canvas')
-        canvas.width = 512
-        canvas.height = 256
-        const ctx = canvas.getContext('2d')!
-        
-        // Background
-        ctx.fillStyle = bgColor
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
-        
-        // Text - using Montserrat font (same as site)
-        ctx.fillStyle = '#ffffff'
-        ctx.font = '800 72px Montserrat, sans-serif'
-        ctx.textAlign = 'center'
-        ctx.textBaseline = 'middle'
-        ctx.fillText(text, canvas.width / 2, canvas.height / 2)
-        
-        const texture = new THREE.CanvasTexture(canvas)
-        texture.needsUpdate = true
-        return texture
-      }
-
-      // LEGO Brick creation function with text
-      const createLegoBrick = (color: number, colorHex: string, width: number, depth: number, y: number, text: string) => {
-        const group = new THREE.Group()
-        
-        // Main brick body
-        const brickHeight = 0.96
-        const geometry = new THREE.BoxGeometry(width * 0.8, brickHeight, depth * 0.8)
-        
-        // Create materials array for each face (right, left, top, bottom, front, back)
-        const textTexture = createTextTexture(text, colorHex)
-        const baseMaterial = new THREE.MeshStandardMaterial({ 
-          color, 
-          roughness: 0.3,
-          metalness: 0.1
-        })
-        const textMaterial = new THREE.MeshStandardMaterial({ 
-          map: textTexture,
-          roughness: 0.3,
-          metalness: 0.1
-        })
-        
-        // Materials: [+X, -X, +Y, -Y, +Z (front), -Z (back)]
-        const materials = [
-          baseMaterial, // right
-          baseMaterial, // left
-          baseMaterial, // top
-          baseMaterial, // bottom
-          textMaterial, // front - show text
-          baseMaterial, // back
-        ]
-        
-        const brick = new THREE.Mesh(geometry, materials)
-        brick.castShadow = true
-        brick.receiveShadow = true
-        group.add(brick)
-
-        // Add studs on top
-        const studGeometry = new THREE.CylinderGeometry(0.24, 0.24, 0.17, 16)
-        const studMaterial = new THREE.MeshStandardMaterial({ 
-          color, 
-          roughness: 0.3,
-          metalness: 0.1
-        })
-        
-        for (let x = 0; x < width; x++) {
-          for (let z = 0; z < depth; z++) {
-            const stud = new THREE.Mesh(studGeometry, studMaterial)
-            stud.position.set(
-              (x - (width - 1) / 2) * 0.8,
-              brickHeight / 2 + 0.085,
-              (z - (depth - 1) / 2) * 0.8
-            )
-            stud.castShadow = true
-            group.add(stud)
-          }
-        }
-
-        group.position.y = y
-        return group
-      }
-
-      // Create stacked bricks - "PIECE BY PIECE"
-      const redBrick = createLegoBrick(0xc91a09, '#c91a09', 4, 2, 0, 'PIECE')
-      redBrick.position.x = -0.4
-      scene.add(redBrick)
-
-      const blueBrick = createLegoBrick(0x0055bf, '#0055bf', 4, 2, 1.13, 'BY')
-      blueBrick.position.x = 0.2
-      scene.add(blueBrick)
-
-      const yellowBrick = createLegoBrick(0xf2cd37, '#f2cd37', 4, 2, 2.26, 'PIECE')
-      yellowBrick.position.x = 0.6
-      scene.add(yellowBrick)
-
-      // Animation loop
-      const animate = () => {
-        requestAnimationFrame(animate)
-        controls.update()
-        renderer.render(scene, camera)
-      }
-      animate()
-
-      // Handle resize
-      const handleResize = () => {
-        if (!container) return
-        const w = container.clientWidth
-        const h = container.clientHeight
-        camera.aspect = w / h
-        camera.updateProjectionMatrix()
-        renderer.setSize(w, h, false)
-      }
-      window.addEventListener('resize', handleResize)
-      
-      // Initial resize to ensure proper fit
-      handleResize()
-
-      // Cleanup
-      return () => {
-        window.removeEventListener('resize', handleResize)
-        if (container && renderer.domElement.parentNode === container) {
-          container.removeChild(renderer.domElement)
-        }
-        renderer.dispose()
-      }
-    }
-
-    initThreeJS()
-  }, [])
-
-  // Initialize Three.js scene when showThreeJS becomes true
   useEffect(() => {
     if (showThreeJS && envContainerRef.current) {
       console.log('Initializing Three.js dorm room scene...')
@@ -622,13 +478,17 @@ export default function Home() {
     window.addEventListener('resize', handleResize)
     handleResize()
 
-    threeJSRendererRef.current = { renderer, cleanup: () => {
-      window.removeEventListener('resize', handleResize)
-      if (container && renderer.domElement.parentNode === container) {
-        container.removeChild(renderer.domElement)
+    threeJSRendererRef.current = { 
+      renderer, 
+      scene,
+      cleanup: () => {
+        window.removeEventListener('resize', handleResize)
+        if (container && renderer.domElement.parentNode === container) {
+          container.removeChild(renderer.domElement)
+        }
+        renderer.dispose()
       }
-      renderer.dispose()
-    }}
+    }
     
     console.log('Three.js dorm room scene initialized successfully')
   }
@@ -723,23 +583,80 @@ export default function Home() {
     }
   }
 
+  // Handle object video upload
+  const handleObjectVideoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (file) {
+      processObjectVideo(file)
+    }
+  }
+
+  // Process object video and add to scene
+  const processObjectVideo = async (videoFile: File) => {
+    setAddingObject(true)
+    const objectName = videoFile.name.replace(/\\.[^/.]+$/, '') // Remove extension
+    
+    try {
+      console.log(`Processing object video: ${objectName}`)
+      const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY || ''
+      
+      // Generate Three.js code from video WITH model analysis
+      const result = await convertVideoTo3DObject(videoFile, objectName, apiKey)
+      
+      if (!result?.threeJSCode) {
+        throw new Error('Failed to generate Three.js code')
+      }
+      
+      // Get the scene from the environment renderer
+      if (!threeJSRendererRef.current?.scene) {
+        throw new Error('No active 3D scene. Please load an environment first.')
+      }
+      
+      // Execute the code and add to scene
+      const { object, modelAnalysis } = await executeAndAddObject(
+        result,
+        threeJSRendererRef.current.scene,
+        objectName
+      )
+      
+      // Store the object reference with model analysis
+      const newObject = {
+        id: `obj-${Date.now()}`,
+        name: objectName,
+        mesh: object,
+        modelAnalysis: modelAnalysis // Store for LEGO generation
+      }
+      setObjects(prev => [...prev, newObject])
+      
+      // Log model details
+      if (modelAnalysis) {
+        console.log(`🏗️ Model: ${modelAnalysis.modelName}`)
+        console.log(`📊 Type: ${modelAnalysis.modelType}`)
+        console.log(`📝 Description: ${modelAnalysis.description}`)
+        console.log(`🧱 Pieces to use:`, modelAnalysis.extractedPieces)
+        
+        // Show model details modal
+        setSelectedModelAnalysis(modelAnalysis)
+        setShowModelDetails(true)
+      }
+      
+      console.log(`✅ Successfully added object: ${objectName}`)
+    } catch (error) {
+      console.error('Error processing object video:', error)
+      alert(`Failed to add object: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    } finally {
+      setAddingObject(false)
+    }
+  }
+
   return (
     <>
       <header>
         <div className="header-left">
           <img src="/Brick.png" alt="Brick by Brick" className="header-logo-img" />
         </div>
-        <div className="header-center"></div>
         <div className="header-right">
-          <div className="icon-box">
-            <i className="fa-brands fa-github"></i>
-          </div>
-          <div className="icon-box">
-            <img src="/MLH.png" alt="MLH" className="mlh-logo-img" />
-          </div>
-          <div className="icon-box" style={{ border: 'none' }}>
-            <img src="/uofthacks.png" alt="UofT Hacks" className="uofthacks-logo-img" />
-          </div>
+          <img src="/banner.png" alt="Banner" className="banner-img" />
         </div>
       </header>
 
@@ -758,7 +675,7 @@ export default function Home() {
             </p>
           </div>
           <div className="visual-section">
-            <div className="brick-viewer-container" ref={brickContainerRef}></div>
+            <img src="/piece_by_piece.svg" alt="Piece by Piece" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
           </div>
         </div>
       </div>
@@ -879,14 +796,43 @@ export default function Home() {
             <div className="panel-header header-bg-cyan">Objects</div>
             <div className="panel panel-content">
               <div className="objects-grid">
-                <div className="obj-item"></div>
-                <div className="obj-item"></div>
-                <div className="obj-item"></div>
-                <div className="obj-item"></div>
-                <div className="obj-add">
-                  <i className="fa-solid fa-plus"></i>
-                </div>
+                {objects.map((obj, index) => (
+                  <div key={obj.id} className="obj-item" title={obj.name}>
+                    <div style={{ fontSize: '24px' }}>📦</div>
+                    <div style={{ fontSize: '10px', marginTop: '4px', textAlign: 'center' }}>{obj.name.substring(0, 8)}</div>
+                  </div>
+                ))}
+                {objects.length < 4 && (
+                  <div 
+                    className="obj-add"
+                    onClick={() => {
+                      const fileInputRef = document.getElementById('object-video-upload') as HTMLInputElement
+                      fileInputRef?.click()
+                    }}
+                    style={{ cursor: addingObject ? 'not-allowed' : 'pointer', opacity: addingObject ? 0.5 : 1 }}
+                  >
+                    <i className="fa-solid fa-plus"></i>
+                  </div>
+                )}
               </div>
+              <input
+                id="object-video-upload"
+                type="file"
+                accept="video/*"
+                onChange={handleObjectVideoChange}
+                style={{ display: 'none' }}
+                disabled={addingObject || !hasEnvironment}
+              />
+              {addingObject && (
+                <div style={{ marginTop: '12px', textAlign: 'center', fontSize: '12px', color: '#666' }}>
+                  Generating 3D object...
+                </div>
+              )}
+              {!hasEnvironment && (
+                <div style={{ marginTop: '12px', textAlign: 'center', fontSize: '12px', color: '#999' }}>
+                  Load environment first to add objects
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -922,19 +868,6 @@ export default function Home() {
               >
                 <i className="fa-solid fa-book"></i>
                 View Details
-              </button>
-              <button 
-                className="switch-model-btn"
-                onClick={() => {
-                  if (hasEnvironment) {
-                    setShowModelSelector(true)
-                  } else {
-                    setShowNothingModal(true)
-                  }
-                }}
-              >
-                <i className="fa-solid fa-shuffle"></i>
-                Switch Model
               </button>
             </div>
           </div>
@@ -1011,19 +944,55 @@ export default function Home() {
         />
       )}
 
-      {/* Model Selector Modal */}
-      <ModelSelector
-        isOpen={showModelSelector}
-        onClose={() => setShowModelSelector(false)}
-        pieceCount={pieceCount}
-        roomType="dorm_room"
-        totalBricks={pieceCount.total_pieces}
-        onSelectModel={(model) => {
-          setSelectedModel(model)
-          console.log('[ModelSelector] Selected model:', model.name)
-          // TODO: Apply model interpretation to the build
-        }}
-      />
+      {/* LEGO Design Modal */}
+      {showLegoDesign && (
+        <div 
+          className="nothing-modal-overlay"
+          onClick={() => setShowLegoDesign(false)}
+        >
+          <div 
+            className="nothing-modal-content"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxHeight: '80vh', overflowY: 'auto' }}
+          >
+            <h2>LEGO Design for {projectName}</h2>
+            <p><strong>Total Pieces: {pieceCount.total_pieces}</strong></p>
+            <div style={{ 
+              whiteSpace: 'pre-wrap', 
+              fontFamily: 'monospace',
+              backgroundColor: '#f5f5f5',
+              padding: '16px',
+              borderRadius: '8px',
+              marginTop: '16px'
+            }}>
+              {legoDesignText}
+            </div>
+            <button
+              style={{
+                marginTop: '16px',
+                padding: '10px 20px',
+                backgroundColor: '#4CAF50',
+                color: 'white',
+                border: 'none',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+              onClick={() => setShowLegoDesign(false)}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Model Details Modal */}
+      {showModelDetails && selectedModelAnalysis && (
+        <ModelDetailsDisplay
+          modelAnalysis={selectedModelAnalysis}
+          onClose={() => setShowModelDetails(false)}
+        />
+      )}
     </>
   )
 }
+
