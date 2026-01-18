@@ -37,8 +37,20 @@ header {
   position: relative;
   z-index: 10;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   padding: 0 50px;
+  gap: 24px;
+}
+.header-logo-left {
+  height: 58px;
+  width: auto;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.header-banner {
+  height: 70px;
+  width: auto;
+  object-fit: contain;
 }
 
 /* BB Coins: sticky bottom-left (bigger) */

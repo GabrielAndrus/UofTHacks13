@@ -610,20 +610,22 @@ export default function Home() {
     setUploadStatus('Processing video...')
 
     try {
-      // Step 1: Simulate video processing delay
-      await new Promise(resolve => setTimeout(resolve, 1000))
+      // Step 1: Simulate video upload (12s)
+      await new Promise(resolve => setTimeout(resolve, 12000))
       setUploadStatus('Analyzing room structure...')
       
-      // Step 2: Load the hardcoded manifest (simulating backend processing)
-      await new Promise(resolve => setTimeout(resolve, 800))
+      // Step 2: Simulate analysis (12s)
+      await new Promise(resolve => setTimeout(resolve, 12000))
       setUploadStatus('Applying greedy algorithm...')
       
+      // Step 3: Simulate greedy algorithm + load manifest (11s)
+      await new Promise(resolve => setTimeout(resolve, 11000))
       const manifest = await loadManifestFromFile('/bedroom_lego_manifest.json')
       console.log(`[Backboard] Loaded manifest with ${manifest.total_bricks} bricks`)
       
-      // Step 3: Process manifest with Backboard memory integration
-      await new Promise(resolve => setTimeout(resolve, 600))
+      // Step 4: Simulate instruction generation (8s) — total ~43s
       setUploadStatus('Generating instruction manual...')
+      await new Promise(resolve => setTimeout(resolve, 8000))
       
       const buildEntry = processManifestWithBackboard(
         manifest,
@@ -783,10 +785,8 @@ export default function Home() {
   return (
     <>
       <header>
-        <div className="header-center-group">
-          <img src="/Brick.png" alt="Brick by Brick" className="header-logo-img" />
-          <img src="/banner.png" alt="Banner" className="banner-img" />
-        </div>
+        <img src="/Brick.png" alt="Brick by Brick" className="header-logo-left" />
+        <img src="/banner.png" alt="Building Blocks" className="header-banner" />
       </header>
 
       {/* Sticky BB Coins (bottom-left) */}
