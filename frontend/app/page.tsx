@@ -4,11 +4,14 @@ import { useEffect, useState, useRef } from 'react'
 
 export default function Home() {
   const brickContainerRef = useRef<HTMLDivElement>(null)
+  const envContainerRef = useRef<HTMLDivElement>(null)
   const [videoFile, setVideoFile] = useState<File | null>(null)
   const [videoPreview, setVideoPreview] = useState<string | null>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadStatus, setUploadStatus] = useState<string>('')
+  const [showThreeJS, setShowThreeJS] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const threeJSRendererRef = useRef<any>(null)
 
   useEffect(() => {
     // Dynamically import Three.js only on client side
@@ -186,53 +189,401 @@ export default function Home() {
     initThreeJS()
   }, [])
 
+  // Initialize Three.js scene when showThreeJS becomes true
+  useEffect(() => {
+    if (showThreeJS && envContainerRef.current) {
+      console.log('Initializing Three.js dorm room scene...')
+      
+      // Clean up any existing renderer first
+      if (threeJSRendererRef.current) {
+        threeJSRendererRef.current.cleanup()
+        threeJSRendererRef.current = null
+      }
+      
+      // Clear the container
+      const container = envContainerRef.current
+      while (container.firstChild) {
+        container.removeChild(container.firstChild)
+      }
+      
+      console.log('Container dimensions:', container.clientWidth, container.clientHeight)
+      
+      // Initialize Three.js with a small delay to ensure container is ready
+      const timer = setTimeout(() => {
+        console.log('Calling initDormRoomThreeJS...')
+        initDormRoomThreeJS().catch((error) => {
+          console.error('Error initializing Three.js:', error)
+        })
+      }, 100)
+      
+      return () => {
+        clearTimeout(timer)
+        if (threeJSRendererRef.current) {
+          threeJSRendererRef.current.cleanup()
+          threeJSRendererRef.current = null
+        }
+      }
+    }
+  }, [showThreeJS])
+
+  // Cleanup Three.js when component unmounts
+  useEffect(() => {
+    return () => {
+      if (threeJSRendererRef.current) {
+        threeJSRendererRef.current.cleanup()
+        threeJSRendererRef.current = null
+      }
+    }
+  }, [])
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
+    console.log('File selected:', file?.name, file?.type)
     if (file && file.type.startsWith('video/')) {
       setVideoFile(file)
       const url = URL.createObjectURL(file)
       setVideoPreview(url)
       setUploadStatus('')
+      console.log('Video preview set')
     } else {
       setUploadStatus('Please select a valid video file')
+      console.error('Invalid file type:', file?.type)
     }
   }
 
-  const handleUpload = async () => {
-    if (!videoFile) return
+  const initDormRoomThreeJS = async () => {
+    if (!envContainerRef.current) return
 
-    setUploading(true)
-    setUploadStatus('Uploading video...')
+    const THREE = await import('three')
+    const { OrbitControls } = await import('three/examples/jsm/controls/OrbitControls.js')
 
-    try {
-      const formData = new FormData()
-      formData.append('file', videoFile)
+    const container = envContainerRef.current
+    const width = container.clientWidth
+    const height = container.clientHeight
 
-      const response = await fetch('http://127.0.0.1:8000/api/upload-video', {
-        method: 'POST',
-        body: formData,
-      })
+    // Scene setup
+    const scene = new THREE.Scene()
+    scene.background = new THREE.Color(0xf2f2f0)
+    scene.fog = new THREE.Fog(0xf2f2f0, 2, 15)
 
-      if (!response.ok) {
-        throw new Error('Upload failed')
-      }
+    const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 100)
+    camera.position.set(3, 2.5, 3)
 
-      const data = await response.json()
-      setUploadStatus(`✅ ${data.message}`)
-    } catch (error) {
-      setUploadStatus(`❌ Error: ${error instanceof Error ? error.message : 'Upload failed'}`)
-    } finally {
-      setUploading(false)
+    const renderer = new THREE.WebGLRenderer({ antialias: true })
+    renderer.setSize(width, height)
+    renderer.shadowMap.enabled = true
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    renderer.domElement.style.display = 'block'
+    renderer.domElement.style.width = '100%'
+    renderer.domElement.style.height = '100%'
+    renderer.domElement.style.position = 'absolute'
+    renderer.domElement.style.top = '0'
+    renderer.domElement.style.left = '0'
+    container.appendChild(renderer.domElement)
+    console.log('Canvas appended to container')
+
+    const controls = new OrbitControls(camera, renderer.domElement)
+    controls.target.set(0, 1, 0)
+    controls.enableDamping = true
+
+    // Materials
+    const materials = {
+      floor: new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.9 }),
+      wall: new THREE.MeshStandardMaterial({ color: 0xfdfdfd, roughness: 0.8 }),
+      woodLight: new THREE.MeshStandardMaterial({ color: 0xeebb99, roughness: 0.6 }),
+      woodDark: new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.5 }),
+      metalBlack: new THREE.MeshStandardMaterial({ color: 0x111111, metalness: 0.6, roughness: 0.4 }),
+      fabricBlue: new THREE.MeshStandardMaterial({ color: 0x334488, roughness: 1.0 }),
+      plasticWhite: new THREE.MeshStandardMaterial({ color: 0xeeeeee, roughness: 0.3 }),
+      poohYellow: new THREE.MeshStandardMaterial({ color: 0xffcc00, roughness: 1.0 }),
+      poohRed: new THREE.MeshStandardMaterial({ color: 0xcc2222, roughness: 1.0 }),
+      coneOrange: new THREE.MeshStandardMaterial({ color: 0xff6600, roughness: 0.4 }),
+      cork: new THREE.MeshStandardMaterial({ color: 0xccaa88, roughness: 1.0 })
     }
+
+    // Lighting
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.5)
+    scene.add(ambientLight)
+
+    const ceilingLight = new THREE.PointLight(0xffffee, 0.8, 10)
+    ceilingLight.position.set(0, 2.8, 0)
+    ceilingLight.castShadow = true
+    scene.add(ceilingLight)
+
+    // 1. ROOM SHELL
+    const roomGroup = new THREE.Group()
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(5, 5), materials.floor)
+    floor.rotation.x = -Math.PI / 2
+    floor.receiveShadow = true
+    roomGroup.add(floor)
+
+    const wallBack = new THREE.Mesh(new THREE.BoxGeometry(5, 3, 0.1), materials.wall)
+    wallBack.position.set(0, 1.5, -2.5)
+    roomGroup.add(wallBack)
+
+    const wallRight = new THREE.Mesh(new THREE.BoxGeometry(0.1, 3, 5), materials.wall)
+    wallRight.position.set(2.5, 1.5, 0)
+    roomGroup.add(wallRight)
+
+    const wallLeft = new THREE.Mesh(new THREE.BoxGeometry(0.1, 3, 5), materials.wall)
+    wallLeft.position.set(-2.5, 1.5, 0)
+    roomGroup.add(wallLeft)
+    scene.add(roomGroup)
+
+    // 2. WALL SHELVES
+    function createClutter(width: number) {
+      const group = new THREE.Group()
+      const colors = [0xffffff, 0x333333, 0xaa5555, 0x55aa55]
+      for (let i = 0; i < 8; i++) {
+        const h = 0.1 + Math.random() * 0.15
+        const r = 0.03 + Math.random() * 0.03
+        const geo = Math.random() > 0.5 
+          ? new THREE.BoxGeometry(r * 2, h, r * 2) 
+          : new THREE.CylinderGeometry(r, r, h)
+        const mat = new THREE.MeshStandardMaterial({ 
+          color: colors[Math.floor(Math.random() * colors.length)] 
+        })
+        const item = new THREE.Mesh(geo, mat)
+        item.position.set((Math.random() - 0.5) * width * 0.8, h / 2, (Math.random() - 0.5) * 0.1)
+        group.add(item)
+      }
+      return group
+    }
+
+    const shelfGroup = new THREE.Group()
+    for (let i = 0; i < 3; i++) {
+      const plank = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.05, 0.25), materials.woodLight)
+      plank.position.set(0, i * 0.4, 0)
+      plank.castShadow = true
+      shelfGroup.add(plank)
+
+      const bracket1 = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.2, 0.25), materials.metalBlack)
+      bracket1.position.set(-0.5, i * 0.4 - 0.1, 0)
+      shelfGroup.add(bracket1)
+
+      const bracket2 = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.2, 0.25), materials.metalBlack)
+      bracket2.position.set(0.5, i * 0.4 - 0.1, 0)
+      shelfGroup.add(bracket2)
+
+      const items = createClutter(1.2)
+      items.position.y = i * 0.4 + 0.025
+      shelfGroup.add(items)
+    }
+    shelfGroup.position.set(2.4, 1.4, 1.0)
+    shelfGroup.rotation.y = -Math.PI / 2
+    scene.add(shelfGroup)
+
+    // 3. BOOK RACK & FRIDGE
+    const rackGroup = new THREE.Group()
+    const fridge = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.8, 0.6), materials.metalBlack)
+    fridge.position.y = 0.4
+    fridge.castShadow = true
+    rackGroup.add(fridge)
+
+    const coffeeMaker = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.1, 0.12, 0.25), 
+      new THREE.MeshStandardMaterial({ color: 0x999999 })
+    )
+    coffeeMaker.position.set(0, 0.92, 0)
+    rackGroup.add(coffeeMaker)
+
+    const rackFrame = new THREE.Mesh(
+      new THREE.BoxGeometry(0.5, 1.0, 0.3), 
+      new THREE.MeshBasicMaterial({ color: 0x000000, wireframe: true })
+    )
+    rackFrame.position.set(0, 1.3, -0.1)
+    rackGroup.add(rackFrame)
+
+    for (let i = 0; i < 8; i++) {
+      const book = new THREE.Mesh(
+        new THREE.BoxGeometry(0.4, 0.08, 0.25), 
+        new THREE.MeshStandardMaterial({ color: Math.random() * 0xffffff })
+      )
+      book.position.set(0, 0.9 + (i * 0.12), -0.1)
+      book.rotation.y = (Math.random() - 0.5) * 0.2
+      rackGroup.add(book)
+    }
+    rackGroup.position.set(2.2, 0, -0.5)
+    rackGroup.rotation.y = -Math.PI / 2
+    scene.add(rackGroup)
+
+    // 4. DESK AREA
+    const deskGroup = new THREE.Group()
+    const deskTop = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.05, 0.7), materials.woodDark)
+    deskTop.position.y = 0.75
+    deskTop.castShadow = true
+    deskGroup.add(deskTop)
+
+    const legGeo = new THREE.BoxGeometry(0.05, 0.75, 0.7)
+    const legL = new THREE.Mesh(legGeo, materials.woodDark)
+    legL.position.set(-0.65, 0.375, 0)
+    deskGroup.add(legL)
+
+    const legR = new THREE.Mesh(legGeo, materials.woodDark)
+    legR.position.set(0.65, 0.375, 0)
+    deskGroup.add(legR)
+
+    const pitcher = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.08, 0.06, 0.25), 
+      materials.plasticWhite
+    )
+    pitcher.position.set(0.4, 0.9, 0.1)
+    deskGroup.add(pitcher)
+
+    const chair = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), materials.fabricBlue)
+    chair.position.set(0, 0.4, 0.4)
+    deskGroup.add(chair)
+
+    deskGroup.position.set(1.5, 0, -2.1)
+    scene.add(deskGroup)
+
+    // 5. DRESSER & POOH & CORKBOARD
+    const dresserGroup = new THREE.Group()
+    const dresserBody = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.9, 0.5), materials.woodLight)
+    dresserBody.position.y = 0.45
+    dresserBody.castShadow = true
+    dresserGroup.add(dresserBody)
+
+    for (let i = 0; i < 3; i++) {
+      const drawer = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.25, 0.02), materials.woodLight)
+      drawer.position.set(0, 0.2 + (i * 0.28), 0.26)
+      dresserGroup.add(drawer)
+    }
+
+    const poohGroup = new THREE.Group()
+    const poohBody = new THREE.Mesh(new THREE.SphereGeometry(0.25, 16, 16), materials.poohYellow)
+    poohGroup.add(poohBody)
+
+    const poohShirt = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.26, 0.26, 0.15, 16), 
+      materials.poohRed
+    )
+    poohShirt.position.y = 0.1
+    poohGroup.add(poohShirt)
+
+    const poohHead = new THREE.Mesh(new THREE.SphereGeometry(0.18, 16, 16), materials.poohYellow)
+    poohHead.position.y = 0.35
+    poohGroup.add(poohHead)
+
+    poohGroup.position.set(-0.3, 1.15, 0)
+    poohGroup.rotation.y = 0.5
+    dresserGroup.add(poohGroup)
+
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.4, 16), materials.coneOrange)
+    cone.position.set(0.4, 1.1, 0)
+    dresserGroup.add(cone)
+
+    dresserGroup.position.set(-2.2, 0, -1.0)
+    dresserGroup.rotation.y = Math.PI / 2
+    scene.add(dresserGroup)
+
+    const corkboard = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.0, 0.05), materials.cork)
+    corkboard.position.set(-2.45, 1.8, -1.0)
+    corkboard.rotation.y = Math.PI / 2
+
+    for (let i = 0; i < 5; i++) {
+      const paper = new THREE.Mesh(new THREE.PlaneGeometry(0.2, 0.3), materials.wall)
+      paper.position.set(0, 0, 0.03)
+      paper.position.x = (Math.random() - 0.5) * 1.2
+      paper.position.y = (Math.random() - 0.5) * 0.8
+      paper.rotation.z = (Math.random() - 0.5) * 0.5
+      corkboard.add(paper)
+    }
+    scene.add(corkboard)
+
+    // 6. WINDOW
+    const curtain = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.8, 0.1), materials.fabricBlue)
+    curtain.position.set(0, 2.0, -2.4)
+    scene.add(curtain)
+
+    const radiator = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.6, 0.15), materials.plasticWhite)
+    radiator.position.set(0, 0.3, -2.4)
+
+    for (let i = 0; i < 10; i++) {
+      const slat = new THREE.Mesh(
+        new THREE.BoxGeometry(0.05, 0.4, 0.16), 
+        new THREE.MeshStandardMaterial({ color: 0xcccccc })
+      )
+      slat.position.x = -0.6 + (i * 0.13)
+      radiator.add(slat)
+    }
+    scene.add(radiator)
+
+    // 7. BED
+    const bed = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.5, 1.2), materials.woodLight)
+    bed.position.set(-1.5, 0.25, 1.5)
+    scene.add(bed)
+
+    const mattress = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.2, 1.1), materials.plasticWhite)
+    mattress.position.set(0, 0.35, 0)
+    bed.add(mattress)
+
+    // Animation loop
+    const animate = () => {
+      requestAnimationFrame(animate)
+      controls.update()
+      renderer.render(scene, camera)
+    }
+    animate()
+
+    // Handle resize
+    const handleResize = () => {
+      if (!container) return
+      const w = container.clientWidth
+      const h = container.clientHeight
+      camera.aspect = w / h
+      camera.updateProjectionMatrix()
+      renderer.setSize(w, h, false)
+    }
+    window.addEventListener('resize', handleResize)
+    handleResize()
+
+    threeJSRendererRef.current = { renderer, cleanup: () => {
+      window.removeEventListener('resize', handleResize)
+      if (container && renderer.domElement.parentNode === container) {
+        container.removeChild(renderer.domElement)
+      }
+      renderer.dispose()
+    }}
+    
+    console.log('Three.js dorm room scene initialized successfully')
+  }
+
+  const handleUpload = async () => {
+    if (!videoFile) {
+      console.error('No video file selected')
+      setUploadStatus('❌ No video file selected')
+      return
+    }
+
+    console.log('Processing video...', videoFile.name)
+    setUploading(true)
+    setUploadStatus('Processing video...')
+
+    // Simulate processing (hardcoded, no backend)
+    setTimeout(() => {
+      setUploadStatus('✅ Video processed successfully')
+      
+      // After processing, show Three.js scene
+      setTimeout(() => {
+        setShowThreeJS(true)
+        setUploading(false)
+      }, 1000)
+    }, 1500)
   }
 
   const handleRemove = () => {
     if (videoPreview) {
       URL.revokeObjectURL(videoPreview)
     }
+    if (threeJSRendererRef.current) {
+      threeJSRendererRef.current.cleanup()
+      threeJSRendererRef.current = null
+    }
     setVideoFile(null)
     setVideoPreview(null)
     setUploadStatus('')
+    setShowThreeJS(false)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -283,7 +634,7 @@ export default function Home() {
           <div className="env-wrapper">
             <div className="panel-header header-bg-red">Environment</div>
             <div className="panel panel-content">
-              {!videoPreview ? (
+              {!videoPreview && !showThreeJS ? (
                 <div className="video-upload-area">
                   <input
                     ref={fileInputRef}
@@ -299,24 +650,47 @@ export default function Home() {
                     <div style={{ fontSize: '12px', color: '#666' }}>Click to select a video file</div>
                   </label>
                 </div>
+              ) : showThreeJS ? (
+                <div className="video-preview-container" style={{ padding: 0, overflow: 'hidden' }}>
+                  <div ref={envContainerRef} style={{ width: '100%', height: '100%', minHeight: '400px', position: 'relative' }}></div>
+                  <div className="video-controls-overlay">
+                    <button
+                      onClick={handleRemove}
+                      className="remove-btn"
+                    >
+                      <i className="fa-solid fa-times"></i>
+                    </button>
+                  </div>
+                </div>
               ) : (
                 <div className="video-preview-container">
                   <video
                     src={videoPreview}
                     controls
-                    style={{ maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto' }}
+                    style={{ maxWidth: '100%', maxHeight: '100%', width: 'auto', height: 'auto', objectFit: 'contain' }}
                   />
                   <div className="video-controls-overlay">
                     <button
-                      onClick={handleUpload}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        console.log('Process Video button clicked')
+                        handleUpload()
+                      }}
                       disabled={uploading}
                       className="upload-btn"
+                      type="button"
                     >
                       {uploading ? 'Uploading...' : 'Process Video'}
                     </button>
                     <button
-                      onClick={handleRemove}
+                      onClick={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        handleRemove()
+                      }}
                       className="remove-btn"
+                      type="button"
                     >
                       <i className="fa-solid fa-times"></i>
                     </button>
